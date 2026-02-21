@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Test script for model switching and availability in Ouroboros.
+Standalone model testing script for Ouroboros.
+Tests model availability and response quality.
 """
 
 import os
 import sys
+import time
 import json
 from typing import Dict, List, Any, Optional
 
@@ -58,12 +60,19 @@ def test_model_response(model: str, prompt: str = "Test response") -> Dict[str, 
         "error": None,
         "response": None,
         "response_length": 0,
-        "response_time_sec": 0.0
+        "response_time_sec": 0.0,
+        "model_configured": True
     }
+    
+    # Check if model is configured in environment
+    configured_models = get_available_models()
+    if model not in configured_models:
+        result["model_configured"] = False
+        result["error"] = f"Model not configured in environment"
+        return result
     
     try:
         import openai
-        import time
         
         client = openai.OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -76,7 +85,8 @@ def test_model_response(model: str, prompt: str = "Test response") -> Dict[str, 
             model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
-            temperature=0.1
+            temperature=0.1,
+            timeout=10  # 10 second timeout
         )
         
         result["response_time_sec"] = time.time() - start_time
@@ -111,6 +121,8 @@ def test_all_models() -> List[Dict[str, Any]]:
         
         if result["success"]:
             print(f"✅ SUCCESS: {result['response_length']} chars in {result['response_time_sec']:.2f}s")
+        elif not result["model_configured"]:
+            print(f"⚠️  NOT CONFIGURED: {result['error']}")
         else:
             print(f"❌ FAILED: {result['error']}")
     
@@ -120,16 +132,20 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Analyze test results and provide insights."""
     analysis = {
         "total_models": len(results),
+        "configured_models": 0,
         "successful_models": 0,
         "failed_models": 0,
         "working_models": [],
         "failed_models": [],
         "empty_responses": 0,
-        "errors": {}
+        "errors": {},
+        "not_configured": 0
     }
     
     for result in results:
-        if result.get("success"):
+        if not result["model_configured"]:
+            analysis["not_configured"] += 1
+        elif result.get("success"):
             analysis["successful_models"] += 1
             analysis["working_models"].append(result["model"])
         else:
@@ -141,11 +157,13 @@ def analyze_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 analysis["errors"][error] = []
             analysis["errors"][error].append(result["model"])
     
+    analysis["configured_models"] = analysis["total_models"] - analysis["not_configured"]
+    
     return analysis
 
 def main():
     """Main test execution."""
-    print("Ouroboros Model Switching Test")
+    print("Ouroboros Model Availability Test")
     print("=" * 50)
     
     # Load environment
@@ -164,9 +182,11 @@ def main():
     analysis = analyze_results(results)
     
     print(f"\nAnalysis Results:")
-    print(f"Total models tested: {analysis['total_models']}")
-    print(f"Successful models: {analysis['successful_models']}")
+    print(f"Total models: {analysis['total_models']}")
+    print(f"Configured models: {analysis['configured_models']}")
+    print(f"Working models: {analysis['successful_models']}")
     print(f"Failed models: {analysis['failed_models']}")
+    print(f"Not configured: {analysis['not_configured']}")
     
     if analysis['successful_models'] > 0:
         print(f"\nWorking models:")
@@ -185,6 +205,12 @@ def main():
                 for model in models:
                     print(f"    - {model}")
     
+    if analysis['not_configured'] > 0:
+        print(f"\nNot configured models:")
+        for model in get_available_models():
+            if not any(r.get("model") == model and r.get("model_configured") for r in results):
+                print(f"  - {model}")
+    
     # Save results to file
     results_path = "model_test_results.json"
     with open(results_path, 'w') as f:
@@ -196,6 +222,21 @@ def main():
         }, f, indent=2)
     
     print(f"\nResults saved to {results_path}")
+    
+    # Provide recommendations
+    if analysis["successful_models"] == 0:
+        print("\n❌ CRITICAL: No working models found!")
+        print("Please check:")
+        print("1. OPENROUTER_API_KEY is valid")
+        print("2. Models are available in OpenRouter")
+        print("3. Network connectivity")
+    elif analysis["successful_models"] < analysis["configured_models"]:
+        print("\n⚠️  Some models are failing. Consider:")
+        print("1. Using only working models")
+        print("2. Checking model availability in OpenRouter")
+        print("3. Reviewing fallback list")
+    else:
+        print("\n✅ All configured models are working!")
     
     return 0
 
