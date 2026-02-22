@@ -282,6 +282,7 @@ Now write a comprehensive summary:"""
                     "cost": usage.get("cost", 0),
                 },
                 "category": "summarize",
+                "model": model,
             }
             if ctx.event_queue is not None:
                 try:

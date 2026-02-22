@@ -162,6 +162,7 @@ def _parse_claude_output(stdout: str, ctx: ToolContext) -> str:
                 "source": "claude_code_edit",
                 "ts": utc_now_iso(),
                 "category": "task",
+                "model": "claude_code_cli",
             })
         return json.dumps(out, ensure_ascii=False, indent=2)
     except Exception:
