@@ -1,3 +1,4 @@
+from ouroboros.tools.registry import ToolContext
 ...
 def _emit_usage_event(review_result: dict, ctx: ToolContext) -> None:
     """Emit llm_usage event for budget tracking (for ALL cases, including errors)."""
