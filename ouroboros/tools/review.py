@@ -10,7 +10,6 @@ from memory import update_scratchpad, update_identity
 
 logger = logging.getLogger(__name__)
 
-
 class MultiModelReviewTool(Tool):
     def name(self) -> str:
         return "multi_model_review"
@@ -44,10 +43,10 @@ class MultiModelReviewTool(Tool):
         Returns the current set of validated free models for review
         """
         return [
-            "stepfun/step-3.5-128k",          # Free tier OpenRouter
-            "google/gemini-2.5-pro-preview",   # Limited free queries
-            "groq/llama-3.1-8b-instant",      # Free via Groq
-            "qwen/qwen3-8b-base"              # OpenRouter free tier
+            "stepfun/step-3.5-flash:free",          # Validated free model
+            "arcee-ai/trinity-large-preview:free",   # Validated free model
+            "google/gemini-1.5-flash",              # Free tier OpenRouter
+            "groq/llama-3.1-70b-versatile"          # Correct Groq model ID (fixed from previous typo)
         ]
 
     def _run_review(self, model: str, content: str, prompt: str) -> Dict[str, Any]:
