@@ -1,3 +1,13 @@
+from typing import Optional, Dict, Any
+import queue
+import logging
+from datetime import datetime
+
+log = logging.getLogger(__name__)
+
+def utc_now_iso() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
 def _emit_llm_usage_event(
     event_queue: Optional[queue.Queue],
     task_id: str,
