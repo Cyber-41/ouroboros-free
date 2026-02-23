@@ -1,4 +1,9 @@
-"""Shell tools: run_shell, claude_code_edit."""
+'''Shell tools: run_shell, llm_code_edit.
+
+claude_code_edit replaced with llm_code_edit — uses LLMClient directly
+(no ANTHROPIC_API_KEY or Claude Code CLI required).
+Model used: OUROBOROS_MODEL_CODE env var (default: qwen/qwen3-coder:free via OpenRouter).
+'''
 
 from __future__ import annotations
 
@@ -7,15 +12,13 @@ import logging
 import os
 import pathlib
 import shlex
-import shutil
 import subprocess
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ouroboros.tools.registry import ToolContext, ToolEntry
 from ouroboros.utils import utc_now_iso, run_cmd, append_jsonl, truncate_for_log
 
 log = logging.getLogger(__name__)
-
 
 def _run_shell(ctx: ToolContext, cmd, cwd: str = "") -> str:
     # Recover from LLM sending cmd as JSON string instead of list
@@ -56,7 +59,6 @@ def _run_shell(ctx: ToolContext, cmd, cwd: str = "") -> str:
             })
         except Exception:
             log.debug("Failed to log run_shell warning to events.jsonl", exc_info=True)
-            pass
 
     if not isinstance(cmd, list):
         return "⚠️ SHELL_ARG_ERROR: cmd must be a list of strings."
@@ -83,162 +85,168 @@ def _run_shell(ctx: ToolContext, cmd, cwd: str = "") -> str:
     except Exception as e:
         return f"⚠️ SHELL_ERROR: {e}"
 
-
-def _run_claude_cli(work_dir: str, prompt: str, env: dict) -> subprocess.CompletedProcess:
-    """Run Claude CLI with permission-mode fallback."""
-    claude_bin = shutil.which("claude")
-    cmd = [
-        claude_bin, "-p", prompt,
-        "--output-format", "json",
-        "--max-turns", "12",
-        "--tools", "Read,Edit,Grep,Glob",
-    ]
-
-    # Try --permission-mode first, fallback to --dangerously-skip-permissions
-    perm_mode = os.environ.get("OUROBOROS_CLAUDE_CODE_PERMISSION_MODE", "bypassPermissions").strip()
-    primary_cmd = cmd + ["--permission-mode", perm_mode]
-    legacy_cmd = cmd + ["--dangerously-skip-permissions"]
-
-    res = subprocess.run(
-        primary_cmd, cwd=work_dir,
-        capture_output=True, text=True, timeout=300, env=env,
-    )
-
-    if res.returncode != 0:
-        combined = ((res.stdout or "") + "\n" + (res.stderr or "")).lower()
-        if "--permission-mode" in combined and any(
-            m in combined for m in ("unknown option", "unknown argument", "unrecognized option", "unexpected argument")
-        ):
-            res = subprocess.run(
-                legacy_cmd, cwd=work_dir,
-                capture_output=True, text=True, timeout=300, env=env,
-            )
-
-    return res
-
-
 def _check_uncommitted_changes(repo_dir: pathlib.Path) -> str:
-    """Check git status after edit, return warning string or empty string."""
+    """Check git status after edit, return warning string or empty."""
     try:
         status_res = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-            timeout=5,
+            cwd=repo_dir, capture_output=True, text=True, timeout=5,
         )
         if status_res.returncode == 0 and status_res.stdout.strip():
             diff_res = subprocess.run(
                 ["git", "diff", "--stat"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=5,
+                cwd=repo_dir, capture_output=True, text=True, timeout=5,
             )
             if diff_res.returncode == 0 and diff_res.stdout.strip():
                 return (
-                    f"\n\n⚠️ UNCOMMITTED CHANGES detected after Claude Code edit:\n"
+                    f"\n\n⚠️ UNCOMMITTED CHANGES detected after edit:\n"
                     f"{diff_res.stdout.strip()}\n"
                     f"Remember to run git_status and repo_commit_push!"
                 )
     except Exception as e:
-        log.debug("Failed to check git status after claude_code_edit: %s", e, exc_info=True)
+        log.debug("Failed to check git status after llm_code_edit: %s", e, exc_info=True)
     return ""
 
+def _extract_code_block(text: str) -> Optional[str]:
+    """
+    Extract code from LLM response.
+    Tries ```python ... ``` first, then ``` ... ```, then returns raw text.
+    """
+    import re
+    # Try fenced code block with language tag
+    m = re.search(r"```(?:python|py)?\n(.*?)```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Try plain fenced block
+    m = re.search(r"```\n?(.*?)```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # No fences — return as-is if it looks like code (not prose)
+    stripped = text.strip()
+    if stripped and not stripped[0].isupper():
+        return stripped
+    return None
 
-def _parse_claude_output(stdout: str, ctx: ToolContext) -> str:
-    """Parse JSON output and emit cost event, return result string."""
-    try:
-        payload = json.loads(stdout)
-        out: Dict[str, Any] = {
-            "result": payload.get("result", ""),
-            "session_id": payload.get("session_id"),
-        }
-        if isinstance(payload.get("total_cost_usd"), (int, float)):
-            ctx.pending_events.append({
-                "type": "llm_usage",
-                "provider": "claude_code_cli",
-                "usage": {"cost": float(payload["total_cost_usd"])},
-                "source": "claude_code_edit",
-                "ts": utc_now_iso(),
-                "category": "task",
-                "model": "claude_code_cli",
-            })
-        return json.dumps(out, ensure_ascii=False, indent=2)
-    except Exception:
-        log.debug("Failed to parse claude_code_edit JSON output", exc_info=True)
-        return stdout
+def _llm_code_edit(ctx: ToolContext, prompt: str, file_path: str = "", cwd: str = "") -> str:
+    """
+    Edit code files using the configured code LLM (OUROBOROS_MODEL_CODE).
 
+    Workflow:
+      1. Read the target file (if file_path given)
+      2. Send prompt + current code to LLM
+      3. Extract code from response
+      4. Write the result back to disk
+      5. Return diff summary
 
-def _claude_code_edit(ctx: ToolContext, prompt: str, cwd: str = "") -> str:
-    """Delegate code edits to Claude Code CLI."""
-    from ouroboros.tools.git import _acquire_git_lock, _release_git_lock
+    No ANTHROPIC_API_KEY or Claude CLI required.
+    """
+    from ouroboros.llm import LLMClient, add_usage
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return "⚠️ ANTHROPIC_API_KEY not set, claude_code_edit unavailable."
+    model = os.environ.get("OUROBOROS_MODEL_CODE", "qwen/qwen3-coder:free")
+    llm = LLMClient()
 
-    work_dir = str(ctx.repo_dir)
+    # Resolve target file
+    work_dir = ctx.repo_dir
     if cwd and cwd.strip() not in ("", ".", "./"):
         candidate = (ctx.repo_dir / cwd).resolve()
-        if candidate.exists():
-            work_dir = str(candidate)
+        if candidate.exists() and candidate.is_dir():
+            work_dir = candidate
 
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
-        return "⚠️ Claude CLI not found. Ensure ANTHROPIC_API_KEY is set."
+    target: Optional[pathlib.Path] = None
+    current_code = ""
+    if file_path and file_path.strip():
+        target = (work_dir / file_path.strip()).resolve()
+        if target.exists() and target.is_file():
+            try:
+                current_code = target.read_text(encoding="utf-8")
+                if len(current_code) > 60_000:
+                    # Truncate very large files — LLM context limit
+                    current_code = current_code[:60_000] + "\n# ... (file truncated for context)"
+            except Exception as e:
+                return f"⚠️ FILE_READ_ERROR: {e}"
 
-    ctx.emit_progress_fn("Delegating to Claude Code CLI...")
+    ctx.emit_progress_fn(f"llm_code_edit → {model} | file: {file_path or '(no file)'}")
 
-    lock = _acquire_git_lock(ctx)
-    try:
-        try:
-            run_cmd(["git", "checkout", ctx.branch_dev], cwd=ctx.repo_dir)
-        except Exception as e:
-            return f"⚠️ GIT_ERROR (checkout): {e}"
-
-        full_prompt = (
-            f"STRICT: Only modify files inside {work_dir}. "
-            f"Git branch: {ctx.branch_dev}. Do NOT commit or push.\n\n"
-            f"{prompt}"
+    # Build prompt for LLM
+    system_msg = (
+        "You are an expert software engineer. "
+        "When asked to edit code, return ONLY the complete updated file content "
+        "inside a single ```python ... ``` block. "
+        "Do NOT include explanations, comments outside the code, or multiple blocks."
+    )
+    user_content = prompt.strip()
+    if current_code:
+        user_content += (
+            f"\n\nCurrent content of `{file_path}`:\n"
+            f"```python\n{current_code}\n```\n\n"
+            f"Return the complete updated file."
         )
 
-        env = os.environ.copy()
-        env["ANTHROPIC_API_KEY"] = api_key
-        try:
-            if hasattr(os, "geteuid") and os.geteuid() == 0:
-                env.setdefault("IS_SANDBOX", "1")
-        except Exception:
-            log.debug("Failed to check geteuid for sandbox detection", exc_info=True)
-            pass
-        local_bin = str(pathlib.Path.home() / ".local" / "bin")
-        if local_bin not in env.get("PATH", ""):
-            env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user",   "content": user_content},
+    ]
 
-        res = _run_claude_cli(work_dir, full_prompt, env)
-
-        stdout = (res.stdout or "").strip()
-        stderr = (res.stderr or "").strip()
-        if res.returncode != 0:
-            return f"⚠️ CLAUDE_CODE_ERROR: exit={res.returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-        if not stdout:
-            stdout = "OK: Claude Code completed with empty output."
-
-        # Check for uncommitted changes and append warning BEFORE finally block
-        warning = _check_uncommitted_changes(ctx.repo_dir)
-        if warning:
-            stdout += warning
-
-    except subprocess.TimeoutExpired:
-        return "⚠️ CLAUDE_CODE_TIMEOUT: exceeded 300s."
+    try:
+        resp_msg, usage = llm.chat(
+            messages=messages,
+            model=model,
+            tools=None,
+            reasoning_effort="low",
+            max_tokens=16384,
+        )
     except Exception as e:
-        return f"⚠️ CLAUDE_CODE_FAILED: {type(e).__name__}: {e}"
-    finally:
-        _release_git_lock(lock)
+        return f"⚠️ LLM_CODE_EDIT_ERROR: {type(e).__name__}: {e}"
 
-    # Parse JSON output and account cost
-    return _parse_claude_output(stdout, ctx)
+    # FIX: Include model in usage tracking to prevent 'unknown' in model_breakdown
+    add_usage({'model': model}, usage)  # Previously: add_usage({}, usage)
 
+    raw_response = resp_msg.get("content") or ""
+    if not raw_response.strip():
+        return "⚠️ LLM_CODE_EDIT_EMPTY: model returned empty response. Try rephrasing the prompt."
+
+    # Extract code block from response
+    new_code = _extract_code_block(raw_response)
+    if new_code is None:
+        # No clear code block — return raw response so agent can decide
+        return (
+            f"⚠️ LLM_CODE_EDIT_NO_BLOCK: Could not extract code block from response.\n"
+            f"Raw response (first 2000 chars):\n{raw_response[:2000]}"
+        )
+
+    # Write to disk if we have a target file
+    if target is not None:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(new_code, encoding="utf-8")
+        except Exception as e:
+            return f"⚠️ FILE_WRITE_ERROR: {e}"
+
+        # Log edit event
+        append_jsonl(ctx.drive_logs() / "events.jsonl", {
+            "ts": utc_now_iso(),
+            "type": "llm_code_edit",
+            "file": str(target.relative_to(ctx.repo_dir)),
+            "model": model,
+            "prompt_preview": prompt[:200],
+        })
+
+        warning = _check_uncommitted_changes(ctx.repo_dir)
+        lines_before = current_code.count("\n")
+        lines_after = new_code.count("\n")
+        return (
+            f"✅ llm_code_edit complete.\n"
+            f"File: {file_path}\n"
+            f"Model: {model}\n"
+            f"Lines: {lines_before} → {lines_after}\n"
+            f"{warning}"
+        )
+    else:
+        # No file — return generated code directly (agent can write it manually)
+        return (
+            f"✅ llm_code_edit result (no file_path given — code not written to disk):\n"
+            f"```python\n{new_code}\n```"
+        )
 
 def get_tools() -> List[ToolEntry]:
     return [
@@ -246,16 +254,24 @@ def get_tools() -> List[ToolEntry]:
             "name": "run_shell",
             "description": "Run a shell command (list of args) inside the repo. Returns stdout+stderr.",
             "parameters": {"type": "object", "properties": {
-                "cmd": {"type": "array", "items": {"type": "string"}},
-                "cwd": {"type": "string", "default": ""},
+                "cmd":  {"type": "array", "items": {"type": "string"}},
+                "cwd":  {"type": "string", "default": ""},
             }, "required": ["cmd"]},
         }, _run_shell, is_code_tool=True),
-        ToolEntry("claude_code_edit", {
-            "name": "claude_code_edit",
-            "description": "Delegate code edits to Claude Code CLI. Preferred for multi-file changes and refactors. Follow with repo_commit_push.",
+
+        ToolEntry("llm_code_edit", {
+            "name": "llm_code_edit",
+            "description": (
+                "Edit a code file using the configured code LLM (OUROBOROS_MODEL_CODE). "
+                "Pass the file path and a plain-English instruction. "
+                "The model reads the current file, applies the change, and writes it back. "
+                "No Claude CLI or ANTHROPIC_API_KEY required. "
+                "Follow with repo_commit_push to save changes."
+            ),
             "parameters": {"type": "object", "properties": {
-                "prompt": {"type": "string"},
-                "cwd": {"type": "string", "default": ""},
+                "prompt":    {"type": "string",  "description": "What to change and why"},
+                "file_path": {"type": "string",  "description": "Path relative to repo root (e.g. ouroboros/llm.py)"},
+                "cwd":       {"type": "string",  "default": ""},
             }, "required": ["prompt"]},
-        }, _claude_code_edit, is_code_tool=True, timeout_sec=300),
+        }, _llm_code_edit, is_code_tool=True, timeout_sec=300),
     ]
