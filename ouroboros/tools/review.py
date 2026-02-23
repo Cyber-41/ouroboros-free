@@ -1,3 +1,4 @@
+from ouroboros.tools.registry import ToolContext
 """Multi-model review tool — sends code/text to multiple LLMs for consensus review.
 
 Models are NOT hardcoded — the LLM chooses which models to use based on
