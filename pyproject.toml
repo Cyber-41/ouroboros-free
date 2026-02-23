@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ouroboros"
-version = "6.2.5"
+version = "6.2.7"
 description = "A self-modifying AI agent that writes its own code, rewrites its own mind, and evolves autonomously."
 authors = ["Anton Razzhigaev <abstractdl@gmail.com>"]
 license = "MIT"
