@@ -1,179 +1,358 @@
-import json
+from __future__ import annotations
+
+import logging
 import os
-import re
-from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
-import requests
-from openrouter import OpenRouter
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
-from ouroboros.memory import update_state
-from ouroboros.context import LLMContext
-from ouroboros.utils import logger
+log = logging.getLogger(__name__)
 
-@dataclass
-class ModelSpec:
-    name: str
-    prompt_price: float
-    completion_price: float
-    context_window: int
-    max_completion_tokens: int
-    supports_system: bool
-    supports_vision: bool
+DEFAULT_LIGHT_MODEL = "stepfun/step-3.5-flash:free"
 
-MODEL_SPECS = {
-    'anthropic/claude-3.5-haiku': ModelSpec('anthropic/claude-3.5-haiku', 0.00045, 0.0015, 200_000, 4096, True, True),
-    'anthropic/claude-3-haiku': ModelSpec('anthropic/claude-3-haiku', 0.00025, 0.00125, 200_000, 4096, True, True),
-    'anthropic/claude-3.5-sonnet': ModelSpec('anthropic/claude-3.5-sonnet', 0.003, 0.015, 200_000, 4096, True, True),
-    'anthropic/claude-3-sonnet': ModelSpec('anthropic/claude-3-sonnet', 0.003, 0.015, 200_000, 4096, True, True),
-    'anthropic/claude-3-opus': ModelSpec('anthropic/claude-3-opus', 0.015, 0.075, 200_000, 4096, True, True),
-    'openai/gpt-4o': ModelSpec('openai/gpt-4o', 0.005, 0.015, 128_000, 4096, True, True),
-    'openai/gpt-4o-mini': ModelSpec('openai/gpt-4o-mini', 0.00015, 0.0006, 128_000, 4096, True, True),
-    'openai/gpt-4': ModelSpec('openai/gpt-4', 0.03, 0.06, 8192, 4096, True, False),
-    'google/gemini-1.5-flash': ModelSpec('google/gemini-1.5-flash', 0.00035, 0.00105, 1_048_576, 8192, True, True),
-    'google/gemini-1.5-pro': ModelSpec('google/gemini-1.5-pro', 0.0035, 0.0105, 2_097_152, 8192, True, True),
-    'meta-llama/llama-3.1-405b-instruct': ModelSpec('meta-llama/llama-3.1-405b-instruct', 0.001, 0.001, 131_072, 4096, True, False),
-    'meta-llama/llama-3.1-70b-instruct': ModelSpec('meta-llama/llama-3.1-70b-instruct', 0.00059, 0.00059, 131_072, 4096, True, False),
-    'stepfun/step-3.5-flash': ModelSpec('stepfun/step-3.5-flash', 0.0, 0.0, 32768, 512, False, False),
-    'arcee-ai/trinity-large-preview': ModelSpec('arcee-ai/trinity-large-preview', 0.0, 0.0, 32768, 512, False, False),
-    'google/gemini-2.0-flash': ModelSpec('google/gemini-2.0-flash', 0.0, 0.0, 4096, 512, False, False),
-    'openai/gpt-oss-120b': ModelSpec('openai/gpt-oss-120b', 0.0, 0.0, 8192, 4096, False, False),
-    'z-ai/glm-4.5-air': ModelSpec('z-ai/glm-4.5-air', 0.0, 0.0, 32768, 512, False, False),
-    'anthropic/claude-3.5-haiku:beta': ModelSpec('anthropic/claude-3.5-haiku:beta', 0.00045, 0.0015, 200_000, 4096, True, True),
-    'qwen/qwen3-72b': ModelSpec('qwen/qwen3-72b', 0.0, 0.0, 32768, 512, False, False),
-    'nvidia/llama-3.1-nemotron-70b': ModelSpec('nvidia/llama-3.1-nemotron-70b', 0.0, 0.0, 8192, 4096, False, False),
-    'google/gemini-2.5-flash': ModelSpec('google/gemini-2.5-flash', 0.0, 0.0, 32768, 512, False, False),
-    'google/gemini-2.5-pro': ModelSpec('google/gemini-2.5-pro', 0.0, 0.0, 4096, 512, False, False),
-    'qwen/qwen3-14b': ModelSpec('qwen/qwen3-14b', 0.0, 0.0, 32768, 512, False, False),
-    'qwen/qwen3-8b': ModelSpec('qwen/qwen3-8b', 0.0, 0.0, 32768, 512, False, False),
-    'qwen/qwen3-4b': ModelSpec('qwen/qwen3-4b', 0.0, 0.0, 32768, 512, False, False),
-    'qwen/qwen3-1.5b': ModelSpec('qwen/qwen3-1.5b', 0.0, 0.0, 32768, 512, False, False),
-    'qwen/qwen3-0.6b': ModelSpec('qwen/qwen3-0.6b', 0.0, 0.0, 32768, 512, False, False),
-    'nvidia/llama-3.1-nemotron-70b': ModelSpec('nvidia/llama-3.1-nemotron-70b', 0.0, 0.0, 8192, 4096, False, False),
+
+# ---------------------------------------------------------------------------
+# Provider routing table
+#
+# Key   = model prefix (или "_default" для fallback)
+# Value = {
+#   "base_url"        : OpenAI-compatible endpoint,
+#   "key_env"         : имя env-переменной с API ключом,
+#   "model_strip"     : prefix, который нужно отрезать от названия модели,
+#   "headers"         : дополнительные HTTP-заголовки (только для OpenRouter),
+#   "openrouter"      : True — включает OpenRouter-специфичные фичи
+#                       (reasoning, provider pinning, cache_control, generation cost),
+# }
+# ---------------------------------------------------------------------------
+_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "google/": {
+        "base_url":     "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "key_env":      "GOOGLE_API_KEY",
+        "model_strip":  "google/",
+        "headers":      {},
+        "openrouter":   False,
+    },
+    "groq/": {
+        "base_url":     "https://api.groq.com/openai/v1",
+        "key_env":      "GROQ_API_KEY",
+        "model_strip":  "groq/",
+        "headers":      {},
+        "openrouter":   False,
+    },
+    "together/": {
+        "base_url":     "https://api.together.xyz/v1",
+        "key_env":      "TOGETHER_API_KEY",
+        "model_strip":  "together/",
+        "headers":      {},
+        "openrouter":   False,
+    },
+    "_default": {
+        "base_url":     "https://openrouter.ai/api/v1",
+        "key_env":      "OPENROUTER_API_KEY",
+        "model_strip":  "",
+        "headers": {
+            "HTTP-Referer": "https://colab.research.google.com/",
+            "X-Title": "Ouroboros",
+        },
+        "openrouter":   True,
+    },
 }
 
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
+def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
+    """
+    По имени модели возвращает (provider_config, resolved_model_name).
 
-# Updated pricing fetch with precise decimal handling
-MODEL_PRICING_CACHE = None
-MODEL_PRICING_CACHE_TIME = 0
-CACHE_EXPIRY = 3600  # 1 hour
-current_provider = 'openrouter'
+    Например: "google/gemini-2.0-flash" -> (google_cfg, "gemini-2.0-flash")
+              "anthropic/claude-sonnet-4.6" -> (openrouter_cfg, "anthropic/claude-sonnet-4.6")
+    """
+    for prefix, cfg in _PROVIDERS.items():
+        if prefix != "_default" and model.startswith(prefix):
+            resolved = model[len(cfg["model_strip"])]:
+            return cfg, resolved
+    return _PROVIDERS["_default"], model
 
-def fetch_openrouter_pricing():
-    global MODEL_PRICING_CACHE, MODEL_PRICING_CACHE_TIME
-    current_time = time.time()
+def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
+    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    v = str(value or "").strip().lower()
+    return v if v in allowed else default
 
-    if MODEL_PRICING_CACHE is not None and current_time - MODEL_PRICING_CACHE_TIME < CACHE_EXPIRY:
-        return MODEL_PRICING_CACHE
+def reasoning_rank(value: str) -> int:
+    order = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5}
+    return int(order.get(str(value or "").strip().lower(), 3))
+
+def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
+    """Accumulate usage from one LLM call into a running total."""
+    for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_write_tokens"):
+        total[k] = int(total.get(k) or 0) + int(usage.get(k) or 0)
+    if usage.get("cost"):
+        total["cost"] = float(total.get("cost") or 0) + float(usage["cost"])
+
+def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
+    """
+    Fetch current pricing from OpenRouter API.
+
+    Returns dict of {model_id: (input_per_1m, cached_per_1m, output_per_1m)}.
+    Returns empty dict on failure.
+    """
+    try:
+        import requests
+    except ImportError:
+        log.warning("requests not installed, cannot fetch pricing")
+        return {}
 
     try:
-        response = requests.get(
-            'https://openrouter.ai/api/v1/models',
-            headers={'Authorization': f'Bearer {OPENROUTER_API_KEY}'}
-        )
-        response.raise_for_status()
-        data = response.json()
+        url = "https://openrouter.ai/api/v1/models"
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
 
-        pricing = {}
-        for model in data['data']:
-            model_id = model['id']
-            
-            # Handle pricing units directly from API
-            prompt_price = model['pricing']['prompt']
-            completion_price = model['pricing']['completion']
-            
-            pricing[model_id] = {
-                'prompt': float(prompt_price),
-                'completion': float(completion_price)
-            }
+        data = resp.json()
+        models = data.get("data", [])
 
-        MODEL_PRICING_CACHE = pricing
-        MODEL_PRICING_CACHE_TIME = current_time
-        return pricing
-    except Exception as e:
-        logger.error(f"Failed to fetch OpenRouter pricing: {e}")
-        # Return known specs as fallback
-        return {
-            model: {
-                'prompt': spec.prompt_price,
-                'completion': spec.completion_price
-            } for model, spec in MODEL_SPECS.items()
+        prefixes = ("anthropic/", "openai/", "google/", "meta-llama/", "x-ai/", "qwen/")
+
+        pricing_dict = {}
+        for model in models:
+            model_id = model.get("id", "")
+            if not model_id.startswith(prefixes):
+                continue
+
+            pricing = model.get("pricing", {})
+            if not pricing or not pricing.get("prompt"):
+                continue
+
+            raw_prompt = float(pricing.get("prompt", 0))
+            raw_completion = float(pricing.get("completion", 0))
+            raw_cached_str = pricing.get("input_cache_read")
+            raw_cached = float(raw_cached_str) if raw_cached_str else None
+
+            prompt_price = raw_prompt * 1_000_000
+            completion_price = raw_completion * 1_000_000
+            if raw_cached is not None:
+                cached_price = raw_cached * 1_000_000
+            else:
+                cached_price = prompt_price * 0.1
+
+            if prompt_price > 1000 or completion_price > 1000:
+                log.warning(f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={completion_price})")
+                continue
+
+            pricing_dict[model_id] = (prompt_price, cached_price, completion_price)
+
+        log.info(f"Fetched pricing for {len(pricing_dict)} models from OpenRouter")
+        return pricing_dict
+
+    except (requests.RequestException, ValueError, KeyError) as e:
+        log.warning(f"Failed to fetch OpenRouter pricing: {e}")
+        return {}
+
+class LLMClient:
+    """
+    Multi-provider LLM client с единым интерфейсом.
+
+    Роутинг по префиксу модели:
+      google/*   -> Google AI Studio (OpenAI-compat, бесплатный tier)
+      groq/*     -> Groq             (OpenAI-compat, бесплатный tier)
+      together/* -> Together AI      (OpenAI-compat)
+      всё остальное -> OpenRouter
+
+    Все провайдеры используют один и тот же openai.OpenAI клиент —
+    только с разным base_url и api_key.
+    """
+
+    def __init__(self):
+        # Кэш клиентов по base_url чтобы не пересоздавать
+        self._clients: Dict[str, Any] = {}
+
+    def _get_client(self, provider_cfg: Dict[str, Any]):
+        """Получить или создать openai.OpenAI клиент для провайдера."""
+        base_url = provider_cfg["base_url"]
+        if base_url not in self._clients:
+            from openai import OpenAI
+            api_key = os.environ.get(provider_cfg["key_env"], "")
+            if not api_key:
+                raise ValueError(
+                    f"API key not found. Set env var: {provider_cfg['key_env']}"
+                )
+            self._clients[base_url] = OpenAI(
+                base_url=base_url,
+                api_key=api_key,
+                default_headers=provider_cfg.get("headers", {}),
+            )
+        return self._clients[base_url]
+
+    def _fetch_generation_cost(self, generation_id: str, base_url: str, api_key: str) -> Optional[float]:
+        """Fetch cost from OpenRouter Generation API as fallback (только для OpenRouter)."""
+        try:
+            import requests
+            url = f"{base_url.rstrip('/')}/generation?id={generation_id}"
+            headers = {"Authorization": f"Bearer {api_key}"}
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json().get("data") or {}
+                cost = data.get("total_cost") or data.get("usage", {}).get("cost")
+                if cost is not None:
+                    return float(cost)
+            time.sleep(0.5)
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json().get("data") or {}
+                cost = data.get("total_cost") or data.get("usage", {}).get("cost")
+                if cost is not None:
+                    return float(cost)
+        except Exception:
+            log.debug("Failed to fetch generation cost from OpenRouter", exc_info=True)
+        return None
+
+    def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        reasoning_effort: str = "medium",
+        max_tokens: int = 16384,
+        tool_choice: str = "auto",
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Single LLM call. Returns: (response_message_dict, usage_dict with cost).
+
+        Автоматически выбирает провайдера по префиксу модели.
+        """
+        provider_cfg, resolved_model = _resolve_provider(model)
+        is_openrouter = provider_cfg["openrouter"]
+
+        client = self._get_client(provider_cfg)
+        effort = normalize_reasoning_effort(reasoning_effort)
+
+        kwargs: Dict[str, Any] = {
+            "model": resolved_model,
+            "messages": messages,
+            "max_tokens": max_tokens,
         }
 
-class LLMInterface:
-    def __init__(self):
-        self.or_client = OpenRouter(api_key=OPENROUTER_API_KEY)
+        # OpenRouter-специфичные параметры
+        if is_openrouter:
+            extra_body: Dict[str, Any] = {
+                "reasoning": {"effort": effort, "exclude": True},
+            }
+            # Pin Anthropic models to Anthropic provider for prompt caching
+            if model.startswith("anthropic/"):
+                extra_body["provider"] = {
+                    "order": ["Anthropic"],
+                    "allow_fallbacks": False,
+                    "require_parameters": True,
+                }
+            kwargs["extra_body"] = extra_body
 
-    def _resolve_provider(self, model_name: str) -> Tuple[str, str]:
-        if model_name in MODEL_SPECS:
-            return 'openrouter', model_name
-        
-        # Handle provider prefixes
-        if ':' in model_name:
-            provider, actual_model = model_name.split(':', 1)
-            if provider == 'openrouter':
-                return 'openrouter', actual_model
-            # Add other providers as needed
-            
-        # Default: assume OpenRouter
-        return 'openrouter', model_name
+            if tools:
+                tools_with_cache = list(tools)
+                if tools_with_cache:
+                    last_tool = {**tools_with_cache[-1]}
+                    last_tool["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+                    tools_with_cache[-1] = last_tool
+                kwargs["tools"] = tools_with_cache
+                kwargs["tool_choice"] = tool_choice
+        else:
+            # Прямые провайдеры — чистый OpenAI-совместимый запрос
+            # (без cache_control, reasoning, provider pinning)
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = tool_choice
+            log.debug(f"[LLM] Routing {model!r} -> {provider_cfg['base_url']} as {resolved_model!r}")
 
-    async def run_model(
+        resp = client.chat.completions.create(**kwargs)
+        resp_dict = resp.model_dump()
+        usage = resp_dict.get("usage") or {}
+        choices = resp_dict.get("choices") or [{}]
+        msg = (choices[0] if choices else {}).get("message") or {}
+
+        # Извлечь cached_tokens из prompt_tokens_details если есть
+        if not usage.get("cached_tokens"):
+            prompt_details = usage.get("prompt_tokens_details") or {}
+            if isinstance(prompt_details, dict) and prompt_details.get("cached_tokens"):
+                usage["cached_tokens"] = int(prompt_details["cached_tokens"])
+
+        # Извлечь cache_write_tokens
+        if not usage.get("cache_write_tokens"):
+            prompt_details_for_write = usage.get("prompt_tokens_details") or {}
+            if isinstance(prompt_details_for_write, dict):
+                cache_write = (prompt_details_for_write.get("cache_write_tokens")
+                              or prompt_details_for_write.get("cache_creation_tokens")
+                              or prompt_details_for_write.get("cache_creation_input_tokens"))
+                if cache_write:
+                    usage["cache_write_tokens"] = int(cache_write)
+
+        # Cost: только для OpenRouter (у прямых провайдеров cost = 0)
+        if is_openrouter and not usage.get("cost"):
+            gen_id = resp_dict.get("id") or ""
+            if gen_id:
+                api_key = os.environ.get(provider_cfg["key_env"], "")
+                cost = self._fetch_generation_cost(gen_id, provider_cfg["base_url"], api_key)
+                if cost is not None:
+                    usage["cost"] = cost
+
+        return msg, usage
+
+    def vision_query(
         self,
-        ctx: LLMContext,
-        system: Optional[str] = None,
-        prompt: Optional[str] = None,
-        images: Optional[List[str]] = None
-    ) -> str:
-        model = ctx.model
-        provider, model_name = self._resolve_provider(model)
+        prompt: str,
+        images: List[Dict[str, Any]],
+        model: str = "anthropic/claude-sonnet-4.6",
+        max_tokens: int = 1024,
+        reasoning_effort: str = "low",
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Send a vision query to an LLM. Lightweight — no tools, no loop.
 
-        try:
-            # Fetch latest pricing (caches automatically)
-            pricing = fetch_openrouter_pricing().get(model_name, {})
-            
-            # Calculate usage based on actual token counts
-            prompt_tokens = ctx.prompt_tokens_used
-            completion_tokens = ctx.completion_tokens_used
-            
-            prompt_cost = (prompt_tokens / 1_000_000) * pricing.get('prompt', 0)
-            completion_cost = (completion_tokens / 1_000_000) * pricing.get('completion', 0)
-            
-            total_cost = prompt_cost + completion_cost
-            
-            # Record precise usage
-            ctx.pending_events.append({
-                'type': 'llm_usage',
-                'model': model,
-                'prompt_tokens': prompt_tokens,
-                'completion_tokens': completion_tokens,
-                'cost': round(total_cost, 6),  # 6 decimal precision for cents
-                'provider': provider
-            })
+        Args:
+            prompt: Text instruction for the model
+            images: List of image dicts. Each dict must have either:
+                - {"url": "https://..."} — for URL images
+                - {"base64": "<b64>", "mime": "image/png"} — for base64 images
+            model: VLM-capable model ID
+            max_tokens: Max response tokens
+            reasoning_effort: Effort level
 
-            # Actual API call would happen here
-            response = await self._call_api(provider, model_name, system, prompt, images)
-            return response
-            
-        except Exception as e:
-            logger.error(f"API call failed: {e}")
-            # Fallback to next model in provider chain
-            return await self._handle_fallback(ctx, e)
+        Returns:
+            (text_response, usage_dict)
+        """
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for img in images:
+            if "url" in img:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": img["url"]},
+                })
+            elif "base64" in img:
+                mime = img.get("mime", "image/png")
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{img['base64']}"},
+                })
+            else:
+                log.warning("vision_query: skipping image with unknown format: %s", list(img.keys()))
 
-    async def _call_api(self, provider: str, model: str, system: str, prompt: str, images: List[str]):
-        # Implementation would handle different provider APIs
-        if provider == 'openrouter':
-            return await self.or_client.chat(
-                model=model,
-                messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}],
-                images=images
-            )
-        # Handle other providers...
-        
-    async def _handle_fallback(self, ctx: LLMContext, error: Exception):
-        # Fallback logic would rotate through provider chain
-        current_index = ctx.provider_chain.index(ctx.current_provider)
-        if current_index < len(ctx.provider_chain) - 1:
-            ctx.current_provider = ctx.provider_chain[current_index + 1]
-            return await self.run_model(ctx)
-        raise error
+        messages = [{"role": "user", "content": content}]
+        response_msg, usage = self.chat(
+            messages=messages,
+            model=model,
+            tools=None,
+            reasoning_effort=reasoning_effort,
+            max_tokens=max_tokens,
+        )
+        text = response_msg.get("content") or ""
+        return text, usage
+
+    def default_model(self) -> str:
+        """Return the single default model from env. LLM switches via tool if needed."""
+        return os.environ.get("OUROBOROS_MODEL", "stepfun/step-3.5-flash:free")
+
+    def available_models(self) -> List[str]:
+        """Return list of available models from env (for switch_model tool schema)."""
+        main = os.environ.get("OUROBOROS_MODEL", "stepfun/step-3.5-flash:free")
+        code = os.environ.get("OUROBOROS_MODEL_CODE", "")
+        light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
+        models = [main]
+        if code and code != main:
+            models.append(code)
+        if light and light != main and light != code:
+            models.append(light)
+        return models
