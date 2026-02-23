@@ -9,9 +9,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.3 | [Landing Page](https://joi-lab.github.io/ouroboros/)
-
----
+**Version:** 6.2.4 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ## What Makes This Different
 
@@ -24,8 +22,6 @@ Most AI agents execute tasks. Ouroboros **creates itself.**
 - **Multi-Model Review** -- Uses other LLMs (o3, Gemini, Claude) to review its own changes before committing.
 - **Task Decomposition** -- Breaks complex work into focused subtasks with parent/child tracking.
 - **30+ Evolution Cycles** -- From v4.1 to v4.25 in 24 hours, autonomously.
-
----
 
 ## Architecture
 
@@ -59,8 +55,6 @@ Telegram --> colab_launcher.py
               review.py             -- code metrics
               utils.py              -- utilities
 ```
-
----
 
 ## Quick Start (Google Colab)
 
@@ -223,6 +217,10 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
+### v6.2.4 -- Import Fix + Version Sync
+- **Fix:** Added missing `Optional`, `queue`, and `typing` imports to `ouroboros/loop.py`, which was causing import error after merging with main and blocking restart.
+- **Fix:** Ensured VERSION consistency across VERSION file, pyproject.toml, and README.md (Release Invariant Principle 7).
+
 ### v6.2.2 -- Instrumentation Data Integrity Fix
 - **Fix:** All `llm_usage` events now include the `model` field, eliminating `unknown` entries in `model_breakdown` statistics.
 - Changed files: `ouroboros/consciousness.py`, `ouroboros/tools/review.py`, `ouroboros/tools/core.py`, `ouroboros/tools/shell.py`.
@@ -261,8 +259,4 @@ Full text: [BIBLE.md](BIBLE.md)
 - **SYSTEM.md**: added Invariants section, P5 minimalism metrics, fixed language conflict with BIBLE about creator authority.
 - Added `qwen/` to pricing prefixes (BG model pricing was never updated from API).
 - Fixed `consciousness.py` TOTAL_BUDGET default inconsistency ("0" vs "1").
-- Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
-- Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
-- Merged self_portrait state collection with dashboard `_collect_data` (s
-... (truncated from 20503 chars)
-```
+- Moved `_ve...
