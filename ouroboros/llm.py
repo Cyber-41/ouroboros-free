@@ -1,388 +1,145 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
+
+from openai import AsyncOpenAI
+from ouroboros.llm_openrouter import OpenRouterLLM
+from ouroboros.tools import ToolSchema
+from ouroboros.utils import utc_now_iso
 
 log = logging.getLogger(__name__)
 
-DEFAULT_LIGHT_MODEL = "google/gemini-2.0-flash"
 
+@dataclass
+class LLMUsage:
+    """Track token usage per request."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cached_prompt_tokens: int = 0
+    llm_api_seconds: float = 0.0
 
-# ---------------------------------------------------------------------------
-# Provider routing table
-#
-# Key   = model prefix (или "_default" для fallback)
-# Value = {
-#   "base_url"        : OpenAI-compatible endpoint,
-#   "key_env"         : имя env-переменной с API ключом,
-#   "model_strip"     : prefix, который нужно отрезать от названия модели,
-#   "headers"         : дополнительные HTTP-заголовки (только для OpenRouter),
-#   "openrouter"      : True — включает OpenRouter-специфичные фичи
-#                       (reasoning, provider pinning, cache_control, generation cost),
-# }
-# ---------------------------------------------------------------------------
-_PROVIDERS: Dict[str, Dict[str, Any]] = {
-    "google/": {
-        "base_url":     "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "key_env":      "GOOGLE_API_KEY",
-        "model_strip":  "google/",
-        "headers":      {},
-        "openrouter":   False,
-    },
-    "groq/": {
-        "base_url":     "https://api.groq.com/openai/v1",
-        "key_env":      "GROQ_API_KEY",
-        "model_strip":  "groq/",
-        "headers":      {},
-        "openrouter":   False,
-    },
-    "together/": {
-        "base_url":     "https://api.together.xyz/v1",
-        "key_env":      "TOGETHER_API_KEY",
-        "model_strip":  "together/",
-        "headers":      {},
-        "openrouter":   False,
-    },
-    "_default": {
-        "base_url":     "https://openrouter.ai/api/v1",
-        "key_env":      "OPENROUTER_API_KEY",
-        "model_strip":  "",
-        "headers": {
-            "HTTP-Referer": "https://colab.research.google.com/",
-            "X-Title": "Ouroboros",
-        },
-        "openrouter":   True,
-    },
-}
-
-def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
-    """
-    По имени модели возвращает (provider_config, resolved_model_name).
-
-    Например: "google/gemini-2.0-flash" -> (google_cfg, "gemini-2.0-flash")
-              "anthropic/claude-sonnet-4.6" -> (openrouter_cfg, "anthropic/claude-sonnet-4.6")
-    """
-    for prefix, cfg in _PROVIDERS.items():
-        if prefix != "_default" and model.startswith(prefix):
-            resolved = model[len(cfg["model_strip"]):]
-            # Validation: prevent empty resolved model names
-            if not resolved.strip():
-                raise ValueError(f"Model name '{model}' becomes empty after stripping prefix '{cfg['model_strip']}'")
-            return cfg, resolved
-    return _PROVIDERS["_default"], model
-
-def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
-    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
-    v = str(value or "").strip().lower()
-    return v if v in allowed else default
-
-def reasoning_rank(value: str) -> int:
-    order = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5}
-    return int(order.get(str(value or "").strip().lower(), 3))
-
-def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
-    """Accumulate usage from one LLM call into a running total."""
-    for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_write_tokens"):
-        total[k] = int(total.get(k) or 0) + int(usage.get(k) or 0)
-    if usage.get("cost"):
-        total["cost"] = float(total.get("cost") or 0) + float(usage["cost"])
-
-def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
-    """
-    Fetch current pricing from OpenRouter API.
-
-    Returns dict of {model_id: (input_per_1m, cached_per_1m, output_per_1m)}.
-    Returns empty dict on failure.
-    """
-    try:
-        import requests
-    except ImportError:
-        log.warning("requests not installed, cannot fetch pricing")
-        return {}
-
-    try:
-        url = "https://openrouter.ai/api/v1/models"
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-
-        data = resp.json()
-        models = data.get("data", [])
-
-        prefixes = ("anthropic/", "openai/", "google/", "meta-llama/", "x-ai/", "qwen/")
-
-        pricing_dict = {}
-        for model in models:
-            model_id = model.get("id", "")
-            if not model_id.startswith(prefixes):
-                continue
-
-            pricing = model.get("pricing", {})
-            if not pricing or not pricing.get("prompt"):
-                continue
-
-            raw_prompt = float(pricing.get("prompt", 0))
-            raw_completion = float(pricing.get("completion", 0))
-            raw_cached_str = pricing.get("input_cache_read")
-            raw_cached = float(raw_cached_str) if raw_cached_str else None
-
-            prompt_price = round(raw_prompt * 1_000_000, 4)
-            completion_price = round(raw_completion * 1_000_000, 4)
-            if raw_cached is not None:
-                cached_price = round(raw_cached * 1_000_000, 4)
-            else:
-                cached_price = round(prompt_price * 0.1, 4)
-
-            if prompt_price > 1000 or completion_price > 1000:
-                log.warning(f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={completion_price})")
-                continue
-
-            pricing_dict[model_id] = (prompt_price, cached_price, completion_price)
-
-        log.info(f"Fetched pricing for {len(pricing_dict)} models from OpenRouter")
-        return pricing_dict
-
-    except (requests.RequestException, ValueError, KeyError) as e:
-        log.warning(f"Failed to fetch OpenRouter pricing: {e}")
-        return {}
-
-class LLMClient:
-    """
-    Multi-provider LLM client с единым интерфейсом.
-
-    Роутинг по префиксу модели:
-      google/*   -> Google AI Studio (OpenAI-compat, бесплатный tier)
-      groq/*     -> Groq             (OpenAI-compat, бесплатный tier)
-      together/* -> Together AI      (OpenAI-compat)
-      всё остальное -> OpenRouter
-
-    Все провайдеры используют один и тот же openai.OpenAI клиент —
-    только с разным base_url и api_key.
-    """
-
-    def __init__(self):
-        # Кэш клиентов по base_url чтобы не пересоздавать
-        import threading
-        self._clients: Dict[str, Any] = {}
-        self._lock = threading.Lock()
-
-    def _get_client(self, provider_cfg: Dict[str, Any]):
-        """Получить или создать openai.OpenAI клиент для провайдера."""
-        base_url = provider_cfg["base_url"]
-        with self._lock:
-            if base_url not in self._clients:
-                from openai import OpenAI
-                api_key = os.environ.get(provider_cfg["key_env"], "")
-                if not api_key:
-                    raise ValueError(
-                        f"API key not found. Set env var: {provider_cfg['key_env']}"
-                    )
-                self._clients[base_url] = OpenAI(
-                    base_url=base_url,
-                    api_key=api_key,
-                    default_headers=provider_cfg.get("headers", {}),
-                )
-        return self._clients[base_url]
-
-    def _fetch_generation_cost(self, generation_id: str, base_url: str, api_key: str) -> Optional[float]:
-        """Fetch cost from OpenRouter Generation API as fallback (только для OpenRouter)."""
-        try:
-            import requests
-            url = f"{base_url.rstrip('/')}/generation?id={generation_id}"
-            headers = {"Authorization": f"Bearer {api_key}"}
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json().get("data") or {}
-                cost = data.get("total_cost") or data.get("usage", {}).get("cost")
-                if cost is not None:
-                    return float(cost)
-            time.sleep(0.5)
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json().get("data") or {}
-                cost = data.get("total_cost") or data.get("usage", {}).get("cost")
-                if cost is not None:
-                    return float(cost)
-        except Exception:
-            log.debug("Failed to fetch generation cost from OpenRouter", exc_info=True)
-        return None
-
-    def chat(
-        self,
-        messages: List[Dict[str, Any]],
-        model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        reasoning_effort: str = "medium",
-        max_tokens: int = 16384,
-        tool_choice: str = "auto",
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Single LLM call. Returns: (response_message_dict, usage_dict with cost).
-
-        Автоматически выбирает провайдера по префиксу модели.
-        """
-        provider_cfg, resolved_model = _resolve_provider(model)
-        is_openrouter = provider_cfg["openrouter"]
-
-        client = self._get_client(provider_cfg)
-        effort = normalize_reasoning_effort(reasoning_effort)
-
-        kwargs: Dict[str, Any] = {
-            "model": resolved_model,
-            "messages": messages,
-            "max_tokens": max_tokens,
+    def dict(self):
+        return {
+            'prompt_tokens': self.prompt_tokens,
+            'completion_tokens': self.completion_tokens,
+            'total_tokens': self.total_tokens,
+            'cached_prompt_tokens': self.cached_prompt_tokens,
+            'llm_api_seconds': self.llm_api_seconds,
         }
 
-        # OpenRouter-специфичные параметры
-        if is_openrouter:
-            extra_body: Dict[str, Any] = {
-                "reasoning": {"effort": effort, "exclude": True},
-            }
-            # Pin Anthropic models to Anthropic provider for prompt caching
-            if model.startswith("anthropic/"):
-                extra_body["provider"] = {
-                    "order": ["Anthropic"],
-                    "allow_fallbacks": False,
-                    "require_parameters": True,
-                }
-            kwargs["extra_body"] = extra_body
+    @classmethod
+    def from_openrouter(cls, usage: Dict) -> LLMUsage:
+        return cls(
+            prompt_tokens=usage.get('prompt_tokens', 0),
+            completion_tokens=usage.get('completion_tokens', 0),
+            total_tokens=usage.get('total_tokens', 0),
+            cached_prompt_tokens=usage.get('cached_prompt_tokens', 0),
+        )
 
-            if tools:
-                tools_with_cache = list(tools)
-                if tools_with_cache:
-                    last_tool = {**tools_with_cache[-1]}
-                    last_tool["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
-                    tools_with_cache[-1] = last_tool
-                kwargs["tools"] = tools_with_cache
-                kwargs["tool_choice"] = tool_choice
-        else:
-            # Прямые провайдеры — чистый OpenAI-совместимый запрос
-            # (без cache_control, reasoning, provider pinning)
-            if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_choice"] = tool_choice
-            log.debug(f"[LLM] Routing {model!r} -> {provider_cfg['base_url']} as {resolved_model!r}")
 
+class LLMClient:
+    def __init__(self):
+        self.usage_events: List[Dict] = []
+        self._openrouter = OpenRouterLLM()
+
+    def add_usage(self, event: Dict, usage: LLMUsage, model: str):
+        """Guarantee model field for all emissions."""
+        event.setdefault('model', model)
+        self.usage_events.append({**event, **usage.dict()})
+
+    async def _execute_single_round(
+        self,
+        messages: List[Dict],
+        ctx: LLMContext,
+        tools: Optional[Dict[str, ToolSchema]] = None,
+        max_tokens: Optional[int] = None,
+    ) -> Tuple[LLMResponse, LLMUsage]:
+        """Core routing logic with unified model handling."""
+        if not ctx.model:
+            raise ValueError("No model specified in context")
+
+        start_time = time.time()
         try:
-            resp = client.chat.completions.create(**kwargs)
-        except Exception as e:
-            log.warning(f"Primary provider failed: {e}. Attempting fallback to OpenRouter.")
-            if provider_cfg != _PROVIDERS["_default"]:
-                fallback_cfg, fallback_model = _PROVIDERS["_default"], model
-                fallback_client = self._get_client(fallback_cfg)
-                kwargs["model"] = fallback_model
-                try:
-                    resp = fallback_client.chat.completions.create(**kwargs)
-                    log.info("Fallback to OpenRouter successful")
-                except Exception as fallback_e:
-                    log.error(f"Fallback also failed: {fallback_e}")
-                    raise
+            if ctx.model.startswith('openrouter/'):
+                # Handle OpenRouter models
+                res = await self._openrouter.chat(
+                    messages=messages,
+                    model=ctx.model,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                )
             else:
-                raise
-
-        resp_dict = resp.model_dump()
-        usage = resp_dict.get("usage") or {}
-        choices = resp_dict.get("choices") or [{}]
-        msg = (choices[0] if choices else {}).get("message") or {}
-
-        # Извлечь cached_tokens из prompt_tokens_details если есть
-        if not usage.get("cached_tokens"):
-            prompt_details = usage.get("prompt_tokens_details") or {}
-            if isinstance(prompt_details, dict) and prompt_details.get("cached_tokens"):
-                usage["cached_tokens"] = int(prompt_details["cached_tokens"])
-
-        # Извлечь cache_write_tokens
-        if not usage.get("cache_write_tokens"):
-            prompt_details_for_write = usage.get("prompt_tokens_details") or {}
-            if isinstance(prompt_details_for_write, dict):
-                cache_write = (prompt_details_for_write.get("cache_write_tokens")
-                              or prompt_details_for_write.get("cache_creation_tokens")
-                              or prompt_details_for_write.get("cache_creation_input_tokens"))
-                if cache_write:
-                    usage["cache_write_tokens"] = int(cache_write)
-
-        # Cost: только для OpenRouter (у прямых провайдеров cost = 0)
-        if is_openrouter and not usage.get("cost"):
-            gen_id = resp_dict.get("id") or ""
-            if gen_id:
-                api_key = os.environ.get(provider_cfg["key_env"], "")
-                cost = self._fetch_generation_cost(gen_id, provider_cfg["base_url"], api_key)
-                if cost is not None:
-                    usage["cost"] = cost
-            if not usage.get("cost"):
-                # Fallback to token-based cost estimation
-                prompt_price = 0.5  # Example rate from OpenRouter
-                completion_price = 1.5
-                usage["cost"] = (
-                    usage.get("prompt_tokens", 0) * prompt_price / 1e6 +
-                    usage.get("completion_tokens", 0) * completion_price / 1e6
+                # Fallback for other providers (OpenAI-style)
+                client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'])
+                res = await client.chat.completions.create(
+                    model=ctx.model,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    timeout=30,
                 )
 
-        return msg, usage
+            elapsed = time.time() - start_time
+            usage = LLMUsage.from_openrouter(res.get('usage', {}))
+            usage.llm_api_seconds = elapsed
 
-    def vision_query(
+            # Guarantee model field
+            self.add_usage(
+                event={
+                    'type': 'llm_usage',
+                    'task_id': ctx.task_id,
+                },
+                usage=usage,
+                model=ctx.model,
+            )
+
+            return LLMResponse.from_response(res), usage
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            log.error(f"LLM call failed: {e}", exc_info=True)
+            raise
+
+    async def _with_fallbacks(
         self,
-        prompt: str,
-        images: List[Dict[str, Any]],
-        model: str = "anthropic/claude-sonnet-4.6",
-        max_tokens: int = 1024,
-        reasoning_effort: str = "low",
-    ) -> Tuple[str, Dict[str, Any]]:
-        """
-        Send a vision query to an LLM. Lightweight — no tools, no loop.
+        messages: List[Dict],
+        ctx: LLMContext,
+        tools: Optional[Dict[str, ToolSchema]] = None,
+        max_tokens: Optional[int] = None,
+        max_retries: int = 2
+    ):
+        """Robust fallback chain with comprehensive error handling."""
+        last_exception = None
+        for i in range(max_retries + 1):
+            try:
+                return await self._execute_single_round(
+                    messages=messages,
+                    ctx=ctx,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                )
+            except Exception as e:
+                last_exception = e
+                next_model = self._next_fallback_model(ctx.model)
+                if next_model is None:
+                    break
+                log.warning(f"Fallback: {ctx.model} → {next_model} (attempt {i+1})")
+                ctx.model = next_model
 
-        Args:
-            prompt: Text instruction for the model
-            images: List of image dicts. Each dict must have either:
-                - {"url": "https://..."} — for URL images
-                - {"base64": "<b64>", "mime": "image/png"} — for base64 images
-            model: VLM-capable model ID
-            max_tokens: Max response tokens
-            reasoning_effort: Effort level
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("All fallback models failed")
 
-        Returns:
-            (text_response, usage_dict)
-        """
-        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for img in images:
-            if "url" in img:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": img["url"]},
-                })
-            elif "base64" in img:
-                mime = img.get("mime", "image/png")
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{img['base64']}"},
-                })
-            else:
-                log.warning("vision_query: skipping image with unknown format: %s", list(img.keys()))
-
-        messages = [{"role": "user", "content": content}]
-        response_msg, usage = self.chat(
-            messages=messages,
-            model=model,
-            tools=None,
-            reasoning_effort=reasoning_effort,
-            max_tokens=max_tokens,
-        )
-        text = response_msg.get("content") or ""
-        return text, usage
-
-    def default_model(self) -> str:
-        """Return the single default model from env. LLM switches via tool if needed."""
-        return os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
-
-    def available_models(self) -> List[str]:
-        """Return list of available models from env (for switch_model tool schema)."""
-        main = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
-        code = os.environ.get("OUROBOROS_MODEL_CODE", "")
-        light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
-        models = [main]
-        if code and code != main:
-            models.append(code)
-        if light and light != main and light != code:
-            models.append(light)
-        return models
+    def _next_fallback_model(self, current_model: str) -> Optional[str]:
+        """Return next valid model in chain or None."""
+        fallback_chain = os.environ.get('OUROBOROS_MODEL_FALLBACK_LIST', '').split(',')
+        try:
+            idx = fallback_chain.index(current_model)
+            return fallback_chain[idx + 1] if idx + 1 < len(fallback_chain) else None
+        except (ValueError, IndexError):
+            return fallback_chain[0] if fallback_chain else None
