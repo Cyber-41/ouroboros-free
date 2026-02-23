@@ -9,7 +9,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.9 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.10 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -223,6 +223,12 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
+### v6.2.10 -- Critical TPM Limit Enforcement
+- **Strict 4096 token context** -- Enforced for all free-tier operations via context.py soft-cap
+- **Model ID validation** -- Added pre-flight check against knowledge_base (`free-model-ids-openrouter`)
+- **Removed invalid models** -- Purged all references to `claude-opus-4.6` and other paid models
+- **Fallback chain stabilized** -- Now exclusively uses `stepfun/step-3.5-flash:free` and validated alternatives
+
 ### v6.2.9 -- Fixed Rate Limiting for Free-Tier Models
 - **Fixed model review chain** -- validated free models IDs now:
   - `[stepfun/step-3.5-flash:free, arcee-ai/trinity-large-preview:free, google/gemini-2.0-flash-001]`
@@ -266,8 +272,4 @@ Full text: [BIBLE.md](BIBLE.md)
 - Per-task mailbox: `owner_inject.py` redesigned with per-task files, message IDs, dedup via seen_ids set.
 - Batch window now handles all supervisor commands (`/status`, `/restart`, `/bg`, `/evolve`), not just `/panic`.
 - **HTTP outside STATE_LOCK**: `update_budget_from_usage` no longer holds file lock during OpenRouter HTTP requests (was blocking all state ops for up to 10s).
-- **ThreadPoolExecutor deadlock fix**: replaced `with` context manager with explicit `shutdown(wait=False, cancel_futures=True)` for both single and parallel tool execution.
-- **Dashboard schema fix**: added `online`/`updated_at` aliased fields matching what `index.html` expects.
-- **BG consciousness spending**: now written to global `state.json` (was memory-only, invisible to budget tracking).
-- **Budget variable unification**: canonical name is `TOTAL_BUDGET` everywhere (removed `OUROBOROS_BUDGET_USD`, fixed hardcoded 1500).
-- **LLM-first self-detection**: new Heal
+- **ThreadPoolExecutor deadlock fix**: replaced `with` context manager with explicit `shutdown(wait=False, cancel_futures=True)` for both single and parallel
