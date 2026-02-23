@@ -9,7 +9,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.2 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -223,7 +223,7 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.2.1 -- Instrumentation Data Integrity Fix
+### v6.2.2 -- Instrumentation Data Integrity Fix
 - **Fix:** All `llm_usage` events now include the `model` field, eliminating `unknown` entries in `model_breakdown` statistics.
 - Changed files: `ouroboros/consciousness.py`, `ouroboros/tools/review.py`, `ouroboros/tools/core.py`, `ouroboros/tools/shell.py`.
 
