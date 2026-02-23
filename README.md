@@ -9,7 +9,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.7 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.8 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -223,6 +223,11 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
+### v6.2.8 -- Critical Model ID Correction
+- **Fix: multi_model_review invalid IDs** -- replaced paid models with validated free alternatives:
+  - `[stepfun/step-3.5-flash:free, arcee-ai/trinity-large-preview:free, qwen/qwen3-next-80b-a3]`
+- **Documentation cleanup** -- removed all references to claude_code_edit (replaced by llm_code_edit)
+
 ### v6.2.7 -- Critical Model ID Correction
 - **Fix: multi_model_review invalid IDs** -- replaced paid models with validated free alternatives:
   - `[stepfun/step-3.5-flash, arcee-ai/trinity-large-preview, qwen/qwen3-next-80b-a3]`
@@ -261,7 +266,4 @@ Full text: [BIBLE.md](BIBLE.md)
 - **LLM-first self-detection**: new Health Invariants section in LLM context surfaces version desync, budget drift, high-cost tasks, stale identity.
 - **SYSTEM.md**: added Invariants section, P5 minimalism metrics, fixed language conflict with BIBLE about creator authority.
 - Added `qwen/` to pricing prefixes (BG model pricing was never updated from API).
-- Fixed `consciousness.py` TOTAL_BUDGET default inconsistency ("0" vs "1").
-- Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
-- Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
-- Merged self_portrait state collection with dashboard `_collect_data` (s
+- Fixed `consciousness.py
