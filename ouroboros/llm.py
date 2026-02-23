@@ -1,11 +1,3 @@
-"""
-Ouroboros — LLM client.
-
-The only module that communicates with the LLM API.
-Supports multiple providers via OpenAI-compatible endpoints.
-Contract: chat(), default_model(), available_models(), add_usage().
-"""
-
 from __future__ import annotations
 
 import logging
@@ -65,7 +57,6 @@ _PROVIDERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-
 def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     По имени модели возвращает (provider_config, resolved_model_name).
@@ -76,20 +67,20 @@ def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     for prefix, cfg in _PROVIDERS.items():
         if prefix != "_default" and model.startswith(prefix):
             resolved = model[len(cfg["model_strip"]):]
+            # Validation: prevent empty resolved model names
+            if not resolved.strip():
+                raise ValueError(f"Model name '{model}' becomes empty after stripping prefix '{cfg['model_strip']}'")
             return cfg, resolved
     return _PROVIDERS["_default"], model
-
 
 def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
     allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
     v = str(value or "").strip().lower()
     return v if v in allowed else default
 
-
 def reasoning_rank(value: str) -> int:
     order = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5}
     return int(order.get(str(value or "").strip().lower(), 3))
-
 
 def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
     """Accumulate usage from one LLM call into a running total."""
@@ -97,7 +88,6 @@ def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
         total[k] = int(total.get(k) or 0) + int(usage.get(k) or 0)
     if usage.get("cost"):
         total["cost"] = float(total.get("cost") or 0) + float(usage["cost"])
-
 
 def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
     """
@@ -157,7 +147,6 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
         log.warning(f"Failed to fetch OpenRouter pricing: {e}")
         return {}
 
-
 class LLMClient:
     """
     Multi-provider LLM client с единым интерфейсом.
@@ -174,23 +163,26 @@ class LLMClient:
 
     def __init__(self):
         # Кэш клиентов по base_url чтобы не пересоздавать
+        import threading
         self._clients: Dict[str, Any] = {}
+        self._lock = threading.Lock()
 
     def _get_client(self, provider_cfg: Dict[str, Any]):
         """Получить или создать openai.OpenAI клиент для провайдера."""
         base_url = provider_cfg["base_url"]
-        if base_url not in self._clients:
-            from openai import OpenAI
-            api_key = os.environ.get(provider_cfg["key_env"], "")
-            if not api_key:
-                raise ValueError(
-                    f"API key not found. Set env var: {provider_cfg['key_env']}"
+        with self._lock:
+            if base_url not in self._clients:
+                from openai import OpenAI
+                api_key = os.environ.get(provider_cfg["key_env"], "")
+                if not api_key:
+                    raise ValueError(
+                        f"API key not found. Set env var: {provider_cfg['key_env']}"
+                    )
+                self._clients[base_url] = OpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                    default_headers=provider_cfg.get("headers", {}),
                 )
-            self._clients[base_url] = OpenAI(
-                base_url=base_url,
-                api_key=api_key,
-                default_headers=provider_cfg.get("headers", {}),
-            )
         return self._clients[base_url]
 
     def _fetch_generation_cost(self, generation_id: str, base_url: str, api_key: str) -> Optional[float]:
@@ -272,7 +264,23 @@ class LLMClient:
                 kwargs["tool_choice"] = tool_choice
             log.debug(f"[LLM] Routing {model!r} -> {provider_cfg['base_url']} as {resolved_model!r}")
 
-        resp = client.chat.completions.create(**kwargs)
+        try:
+            resp = client.chat.completions.create(**kwargs)
+        except Exception as e:
+            log.warning(f"Primary provider failed: {e}. Attempting fallback to OpenRouter.")
+            if provider_cfg != _PROVIDERS["_default"]:
+                fallback_cfg, fallback_model = _PROVIDERS["_default"], model
+                fallback_client = self._get_client(fallback_cfg)
+                kwargs["model"] = fallback_model
+                try:
+                    resp = fallback_client.chat.completions.create(**kwargs)
+                    log.info("Fallback to OpenRouter successful")
+                except Exception as fallback_e:
+                    log.error(f"Fallback also failed: {fallback_e}")
+                    raise
+            else:
+                raise
+
         resp_dict = resp.model_dump()
         usage = resp_dict.get("usage") or {}
         choices = resp_dict.get("choices") or [{}]
@@ -302,6 +310,14 @@ class LLMClient:
                 cost = self._fetch_generation_cost(gen_id, provider_cfg["base_url"], api_key)
                 if cost is not None:
                     usage["cost"] = cost
+            if not usage.get("cost"):
+                # Fallback to token-based cost estimation
+                prompt_price = 0.5  # Example rate from OpenRouter
+                completion_price = 1.5
+                usage["cost"] = (
+                    usage.get("prompt_tokens", 0) * prompt_price / 1e6 +
+                    usage.get("completion_tokens", 0) * completion_price / 1e6
+                )
 
         return msg, usage
 
