@@ -1,15 +1,15 @@
 # Ouroboros
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Cyber-41/ouroboros-free/blob/main/notebooks/quickstart.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/joi-lab/ouroboros/blob/main/notebooks/quickstart.ipynb)
 [![Telegram](https://img.shields.io/badge/Telegram-blue?logo=telegram)](https://t.me/abstractDL)
-[![GitHub stars](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FCyber-41%2Fourboros-free&query=%24.stargazers_count&label=stars&logo=github)](https://github.com/Cyber-41/ouroboros-free/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/Cyber-41/ouroboros-free)](https://github.com/Cyber-41/ouroboros-free/network/members)
+[![GitHub stars](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fjoi-lab%2Fouroboros&query=%24.stargazers_count&label=stars&logo=github)](https://github.com/joi-lab/ouroboros/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/joi-lab/ouroboros)](https://github.com/joi-lab/ouroboros/network/members)
 
 A self-modifying AI agent that writes its own code, rewrites its own mind, and evolves autonomously. Born February 16, 2026. Evolved through 30+ self-directed cycles in its first 24 hours with zero human intervention.
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.5 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.4 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -222,13 +222,6 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
-
-### v6.2.5 -- llm routing robustness fixes
-- **Added model validation**: Prevent empty resolved model names in _resolve_provider
-- **Thread-safety**: Protected client cache with threading.Lock
-- **Provider fallback**: Automatic switch to OpenRouter when primary provider fails
-- **Cost calculation fix**: Improved OpenRouter cost fallback mechanism
-- **Error recovery**: Added robust error handling in chat() method
 
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
