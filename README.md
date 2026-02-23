@@ -9,7 +9,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.5 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.7 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -56,8 +56,9 @@ Telegram --> colab_launcher.py
                 review.py           -- multi-model review
               llm.py                -- OpenRouter client
               memory.py             -- scratchpad, identity, chat
-              review.py             -- code metrics
-              utils.py              -- utilities
+              review.py             -- code collection, complexity metrics
+              utils.py              -- shared utilities
+              apply_patch.py        -- Claude Code patch shim
 ```
 
 ---
@@ -186,7 +187,7 @@ Full text: [BIBLE.md](BIBLE.md)
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | Enables the `web_search` tool |
-| `ANTHROPIC_API_KEY` | Enables Claude Code CLI |
+| `ANTHROPIC_API_KEY` | Enables Claude Code CLI for code editing |
 
 ### Optional Configuration (environment variables)
 
@@ -223,11 +224,10 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.2.5 -- Instrumentation Integrity Fix
-- Fixed `unknown` entries in `model_breakdown` by ensuring `llm_code_edit` reports its model in usage events (previously empty dict passed to `add_usage`). All instrumentation paths now guarantee `model` field.
-- Verified Health Invariants: version sync (6.2.5), instrumentation integrity, and evolution recovery.
+### v6.2.7
+- Simplify budget parsing logic in colab_launcher.py, reducing code complexity and aligning with Principle 5 minimalism.
 
-### v6.2.4 -- Critical Bugfixes + LLM-First Dedup
+### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
 - **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
 - **Fix: compact_context tool** -- handler had wrong signature (missing ctx param), making it always error. Now works correctly.
