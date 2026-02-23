@@ -110,6 +110,7 @@ def _check_uncommitted_changes(repo_dir: pathlib.Path) -> str:
 def _extract_code_block(text: str) -> Optional[str]:
     """
     Extract code from LLM response.
+<<<<<<< Updated upstream
     Tries ```python ... ``` first, then ``` ... ```, then returns raw text.
     """
     import re
@@ -275,3 +276,6 @@ def get_tools() -> List[ToolEntry]:
             }, "required": ["prompt"]},
         }, _llm_code_edit, is_code_tool=True, timeout_sec=300),
     ]
+=======
+    Tries
+>>>>>>> Stashed changes
