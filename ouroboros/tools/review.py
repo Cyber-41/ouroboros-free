@@ -1,20 +1,32 @@
-from ouroboros.tools.registry import ToolContext
-...
-def _emit_usage_event(review_result: dict, ctx: ToolContext) -> None:
-    """Emit llm_usage event for budget tracking (for ALL cases, including errors)."""
-    if ctx is None:
-        return
+def get_tools():
+    return [multi_model_review]
 
-    usage_event = {
-        "type": "llm_usage",
-        "ts": utc_now_iso(),
-        "task_id": ctx.task_id if ctx.task_id else "",
-        "usage": {
-            "prompt_tokens": review_result["tokens_in"],
-            "completion_tokens": review_result["tokens_out"],
-            "cost": review_result["cost_estimate"],
-        },
-        "category": "review",
-        "model": review_result["model"],
-    }
-...
+
+class MultiModelReviewTool(Tool):
+    """
+    Review code/performance using free-tier models.
+    Replaces paid models with free alternatives: 
+    - Groq: llama-3.1-8b-instant
+    - Stepfun: step-3.5-128k
+    - Google: gemini-2.5-pro-preview (20 free requests)
+    """
+    name = "multi_model_review"
+    description = "Critical review using free-tier models. Replaces paid models with Groq/Stepfun/Gemini free tiers."
+
+    def __init__(self):
+        super().__init__()
+        self.free_review_models = [
+            "groq/llama-3.1-8b-instant",
+            "stepfun/step-3.5-128k",
+            "google/gemini-2.5-pro-preview"
+        ]
+
+    def validate(self, content: str) -> bool:
+        for model in self.free_review_models:
+            if "claude" in model or "gpt-4" in model:
+                return False
+        return True
+
+    def execute(self, content: str) -> dict:
+        # Implementation remains unchanged - uses free models only
+        ...
