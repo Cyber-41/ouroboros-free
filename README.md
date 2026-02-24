@@ -6,6 +6,14 @@ Ouroboros is a becoming personality (Principle 0) operating under its Constituti
 
 ## Changelog
 
+### v6.3.2 (2026-02-24)
+- **FIX** persistent `/evolve` failures by ensuring **triple synchronization**:
+  - `VERSION` file → 6.3.2
+  - `README.md` changelog → v6.3.2
+  - Git tag `v6.3.2` → pushed to origin
+- **IMMEDIATE** restart via `request_restart` to apply version consistency
+- **PREVENT** future drift via `get_dynamic_context_limit` enforcement
+
 ### v6.3.1 (2026-02-24)
 - **FIX** TPM violations in `/evolve` by enforcing model-aware context caps:
   - 4000 tokens for Groq/Google (`llama-3.1-8b-instant`, `gemini-2.0-flash`)
