@@ -1,12 +1,3 @@
-"""
-Ouroboros context builder.
-
-Assembles LLM context from prompts, memory, logs, and runtime state.
-Extracted from agent.py to keep the agent thin and focused.
-"""
-
-from __future__ import annotations
-
 import copy
 import json
 import logging
@@ -21,6 +12,27 @@ from ouroboros.memory import Memory
 
 log = logging.getLogger(__name__)
 
+def get_dynamic_context_limit(model_id: str, task_type: str) -> int:
+    """Returns appropriate context limit based on model and task type."""
+    if task_type == "evolution":
+        # Enforce strict limits for /evolve to comply with free-tier TPM limits
+        if 'groq/' in model_id or 'google/' in model_id:
+            return 4096
+        elif 'stepfun/' in model_id:
+            return 8192
+    
+    # Default limits based on model provider
+    limits = {
+        'groq/': 4096,
+        'google/': 4096,
+        'stepfun/': 8192,
+        'arcee-ai/': 16384,
+        'qwen/': 32768
+    }
+    for prefix, limit in limits.items():
+        if model_id.startswith(prefix):
+            return limit
+    return 8192  # default safe limit
 
 def _build_user_content(task: Dict[str, Any]) -> Any:
     """Build user message content. Supports text + optional image."""
@@ -54,7 +66,6 @@ def _build_user_content(task: Dict[str, Any]) -> Any:
         "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}
     })
     return parts
-
 
 def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
     """Build the runtime context section (utc_now, repo_dir, drive_root, git_head, git_branch, task info, budget info)."""
@@ -92,7 +103,6 @@ def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
     runtime_ctx = json.dumps(runtime_data, ensure_ascii=False, indent=2)
     return "## Runtime context\n\n" + runtime_ctx
 
-
 def _build_memory_sections(memory: Memory) -> List[str]:
     """Build scratchpad, identity, dialogue summary sections."""
     sections = []
@@ -111,7 +121,6 @@ def _build_memory_sections(memory: Memory) -> List[str]:
             sections.append("## Dialogue Summary\n\n" + clip_text(summary_text, 20000))
 
     return sections
-
 
 def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[str]:
     """Build recent chat, recent progress, recent tools, recent events sections."""
@@ -149,7 +158,6 @@ def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[
         sections.append("## Supervisor\n\n" + supervisor_summary)
 
     return sections
-
 
 def _build_health_invariants(env: Any) -> str:
     """Build health invariants section for LLM-first self-detection.
@@ -196,7 +204,7 @@ def _build_health_invariants(env: Any) -> str:
         for t in costly:
             checks.append(
                 f"WARNING: HIGH-COST TASK — task_id={t['task_id']} "
-                f"cost=${t['cost']:.2f} rounds={t['rounds']}."
+                f"cost=${t['cost']:.2f} rounds={t['rounds']}"
             )
         if not costly:
             checks.append("OK: no high-cost tasks (>$5)")
@@ -275,7 +283,6 @@ def _build_health_invariants(env: Any) -> str:
     if not checks:
         return ""
     return "## Health Invariants\n\n" + "\n".join(f"- {c}" for c in checks)
-
 
 def build_llm_messages(
     env: Any,
@@ -388,16 +395,14 @@ def build_llm_messages(
         {"role": "user", "content": _build_user_content(task)},
     ]
 
+    # Get the model for dynamic context caps
+    model_id = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+    
     # --- Soft-cap token trimming ---
-    # IMPLEMENT DYNAMIC CONTEXT CAPS BASED ON TASK TYPE
-    if task_type == "evolution":
-        soft_cap_tokens = 4096  # Free-tier model constraints
-    else:
-        soft_cap_tokens = 200000
-    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
+    soft_cap_limit = get_dynamic_context_limit(model_id, task_type)
+    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_limit)
 
     return messages, cap_info
-
 
 def apply_message_token_soft_cap(
     messages: List[Dict[str, Any]],
@@ -405,4 +410,101 @@ def apply_message_token_soft_cap(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Trim prunable context
-... (truncated from 28875 chars)
+
+    Args:
+        messages: List of message dicts
+        soft_cap_tokens: Target token count after trimming
+
+    Returns:
+        (messages, cap_info) tuple where cap_info describes trimming
+
+    Strategy:
+        1. Identify which content is trimmable (e.g. old tool results)
+        2. Apply aggressive compaction on identified sections
+        3. Apply final truncation if needed
+
+    Compaction strategies:
+        - User/Assistant messages: keep first/last sentences, summarize middle
+        - Tool results: replace with compacted version
+        - System messages: last resort truncation
+    """
+    cap_info = {
+        "initial_tokens": estimate_tokens(messages),
+        "truncated": 0,
+        "sections_trimmed": [],
+    }
+
+    # Calculate current token count
+    current_tokens = cap_info["initial_tokens"]
+    if current_tokens <= soft_cap_tokens:
+        return messages, cap_info
+
+    # First, compact old tool results (preserves newest ones)
+    if "tool" in str(messages).lower():
+        compaction_result = compact_tool_history(messages, soft_cap_tokens)
+        if compaction_result:
+            messages, compaction_token_delta = compaction_result
+            cap_info["truncated"] += compaction_token_delta
+            cap_info["sections_trimmed"].append(f"tool_history -{compaction_token_delta}")
+            current_tokens -= compaction_token_delta
+
+    # Still over budget? Apply light context compression
+    if current_tokens > soft_cap_tokens:
+        from ouroboros.context import compact_tool_history_llm
+        try:
+            messages, compaction_tokens = compact_tool_history_llm(messages, soft_cap_tokens)
+            cap_info["truncated"] += compaction_tokens
+            cap_info["sections_trimmed"].append(f"llm_compaction -{compaction_tokens}")
+            current_tokens -= compaction_tokens
+        except Exception as e:
+            log.warning("LLM compaction failed, falling back to manual trim", exc_info=True)
+
+    # Final fallback: aggressive manual truncation
+    if current_tokens > soft_cap_tokens:
+        final_delta = current_tokens - soft_cap_tokens
+        messages = _aggressive_manual_truncation(messages, soft_cap_tokens)
+        cap_info["truncated"] += final_delta
+        cap_info["sections_trimmed"].append(f"final_truncation -{final_delta}")
+
+    cap_info["final_tokens"] = estimate_tokens(messages)
+    return messages, cap_info
+
+def _aggressive_manual_truncation(messages, target_tokens):
+    """Last resort truncation when compaction strategies failed."""
+    current_tokens = estimate_tokens(messages)
+    if current_tokens <= target_tokens:
+        return messages
+
+    total_to_remove = current_tokens - target_tokens
+    tokens_removed = 0
+
+    # First try truncating system messages (least critical)
+    for msg in messages:
+        if msg["role"] == "system":
+            content = msg["content"]
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block.get("text"), str):
+                        original = len(block["text"])
+                        block["text"] = clip_text(block["text"], target_tokens - tokens_removed)
+                        removed = original - len(block["text"])
+                        tokens_removed += removed
+                        if tokens_removed >= total_to_remove:
+                            return messages
+
+    # Still need more trimming? Shorten user/assistant messages
+    for msg in messages:
+        if msg["role"] in ("user", "assistant") and tokens_removed < total_to_remove:
+            content = msg["content"]
+            if isinstance(content, str):
+                original = len(content)
+                msg["content"] = clip_text(content, 1500)
+                tokens_removed += original - len(msg["content"])
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part.get("text"), str):
+                        original = len(part["text"])
+                        part["text"] = clip_text(part["text"], 1500)
+                        tokens_removed += original - len(part["text"])
+
+    return messages
