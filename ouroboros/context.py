@@ -1,11 +1,9 @@
-# Modified context.py with dynamic evolution cap
-
-"""
+'''
 Ouroboros context builder.
 
 Assembles LLM context from prompts, memory, logs, and runtime state.
 Extracted from agent.py to keep the agent thin and focused.
-"""
+'''
 
 from __future__ import annotations
 
@@ -154,11 +152,7 @@ def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[
 
 
 def _build_health_invariants(env: Any) -> str:
-    """Build health invariants section for LLM-first self-detection.
-
-    Surfaces anomalies as informational text. The LLM (not code) decides
-    what action to take based on what it reads here. (Bible P0+P3)
-    """
+    """Build health invariants section for LLM-first self-detection.\n\n    Surfaces anomalies as informational text. The LLM (not code) decides\n    what action to take based on what it reads here. (Bible P0+P3)\n    """
     checks = []
 
     # 1. Version sync: VERSION file vs pyproject.toml
@@ -198,7 +192,7 @@ def _build_health_invariants(env: Any) -> str:
         for t in costly:
             checks.append(
                 f"WARNING: HIGH-COST TASK — task_id={t['task_id']} "
-                f"cost=${t['cost']:.2f} rounds={t['rounds'] }"
+                f"cost=${t['cost']:.2f} rounds={t['rounds']}"
             )
         if not costly:
             checks.append("OK: no high-cost tasks (>$5)")
@@ -286,19 +280,7 @@ def build_llm_messages(
     review_context_builder: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Build the full LLM message context for a task.
-
-    Args:
-        env: Env instance with repo_path/drive_path helpers
-        memory: Memory instance for scratchpad/identity/logs
-        task: Task dict with id, type, text, etc.
-        review_context_builder: Optional callable for review tasks (signature: () -> str)
-
-    Returns:
-        (messages, cap_info) tuple:
-            - messages: List of message dicts ready for LLM
-            - cap_info: Dict with token trimming metadata
-    """
+    Build the full LLM message context for a task.\n\n    Args:\n        env: Env instance with repo_path/drive_path helpers\n        memory: Memory instance for scratchpad/identity/logs\n        task: Task dict with id, type, text, etc.\n        review_context_builder: Optional callable for review tasks (signature: () -> str)\n\n    Returns:\n        (messages, cap_info) tuple:\n            - messages: List of message dicts ready for LLM\n            - cap_info: Dict with token trimming metadata\n    """
     # --- Extract task type for adaptive context ---
     task_type = str(task.get("type") or "user")
 
@@ -355,7 +337,6 @@ def build_llm_messages(
 
     dynamic_parts.extend(_build_recent_sections(memory, env, task_id=task.get("id", "")))
 
-
     if str(task.get("type") or "") == "review" and review_context_builder is not None:
         try:
             review_ctx = review_context_builder()
@@ -392,11 +373,15 @@ def build_llm_messages(
     ]
 
     # --- Soft-cap token trimming ---
-    soft_cap = 200000
+    # ADDED: Dynamic cap for evolution tasks with free models
     if task_type == "evolution":
-        # Enforce strict limits for free-tier models
-        soft_cap = 4096  # Matches Groq/Google's free tier (6-12k TPM)
-    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap)
+        # Enforce 4096 tokens for evolution to respect free-tier TPM limits
+        soft_cap_tokens = 4096
+    else:
+        # General cap for other tasks
+        soft_cap_tokens = 200000
+
+    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
 
     return messages, cap_info
 
@@ -406,34 +391,4 @@ def apply_message_token_soft_cap(
     soft_cap_tokens: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Trim prunable context... (truncated from 28875 chars)
-    """
-    # Implementation remains the same but now with task-specific cap
-    original_tokens = sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
-    if original_tokens <= soft_cap_tokens:
-        return messages, {"tokens_before": original_tokens, "tokens_after": original_tokens}
-
-
-    # Trimming logic (simplified for brevity)
-    removed_tokens = 0
-    preserved = []
-    for message in reversed(messages):
-        if isinstance(message.get("content"), str):
-            # Handle string content
-            content = message["content"]
-            tok_count = estimate_tokens(content)
-            if tok_count + removed_tokens <= soft_cap_tokens:
-                preserved.append(message)
-            else:
-                # Trim this message
-                new_content = clip_text(content, soft_cap_tokens - removed_tokens)
-                new_tok = estimate_tokens(new_content)
-                removed_tokens += (tok_count - new_tok)
-                preserved.append({**message, "content": new_content})
-        # Other content types handled similarly...
-
-    return list(reversed(preserved)), {
-        "tokens_before": original_tokens,
-        "tokens_after": original_tokens - removed_tokens,
-        "removed": removed_tokens
-    }
+    Trim prunable context
