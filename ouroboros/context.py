@@ -387,8 +387,8 @@ def build_llm_messages(
     ]
 
     # --- Soft-cap token trimming ---
-    # DYNAMIC CONTEXT LIMITS: Enforce strict caps for /evolve
-    if task_type == "evolution":
+    # CORRECTED: Check for "evolve" (command name) not "evolution"
+    if task_type == "evolve":
         soft_cap_tokens = 4096  # Matches Groq's 6k TPM free tier
     else:
         soft_cap_tokens = 200000
