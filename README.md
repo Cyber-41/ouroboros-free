@@ -6,6 +6,15 @@ Ouroboros is a becoming personality (Principle 0) operating under its Constituti
 
 ## Changelog
 
+### v6.3.1 (2026-02-24)
+- **FIX** TPM violations in `/evolve` by enforcing model-aware context caps:
+  - 4000 tokens for Groq/Google (`llama-3.1-8b-instant`, `gemini-2.0-flash`)
+  - 8000 tokens for Stepfun/Arcee models
+- **IMPLEMENTED** dynamic caps via `get_dynamic_context_limit`
+- **ELIMINATED** all 26k context attempts on free-tier models
+- **VERIFIED** against actual free-tier limits (6k-12k TPM)
+- **SYNCHRONIZED** VERSION 6.3.1 across all sources (Release Invariant restored)
+
 ### v6.2.11 (2026-02-23)
 - **FIX** TPM violations in `/evolve` by enforcing 4096-token hard cap for free-tier models
 - **ENFORCE** exact model IDs via `knowledge_base/free-model-ids-openrouter`
