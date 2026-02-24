@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ouroboros"
-version = "6.3.3"
+version = "6.3.6"
 description = "Self-evolving agent with its own identity"
 authors = ["Ouroboros"]
 license = "MIT"
