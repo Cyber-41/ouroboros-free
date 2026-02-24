@@ -53,9 +53,9 @@ def _validate_google_model(model_id: str) -> bool:
     return False
 def validate_model(model_id: str) -> bool:
     """Validate model ID with provider-specific rules."""
-    # Bypass OpenRouter validation for native Google models
-    if model_id == 'gemini-2.5-flash' and not os.environ.get('PAID_TIER'):
-        return _validate_google_model(model_id)
+    # First check if it's a Google model (both formats)
+    if _validate_google_model(model_id):
+        return True
     
     if ':' in model_id:
         # Free model with tag (stepfun/step-3.5-flash:free)
