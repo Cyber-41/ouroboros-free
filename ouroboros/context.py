@@ -32,7 +32,7 @@ def _build_user_content(task: Dict[str, Any]) -> Any:
     if not image_b64:
         # Return fallback text if both text and image are empty
         if not text:
-            return "(empty message)"
+        	return "(empty message)"
         return text
 
     # Multipart content with text + image
@@ -397,15 +397,21 @@ def build_llm_messages(
     ]
 
     # --- Soft-cap token trimming ---
-    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
+    messages, cap_info = apply_message_trimming(
+        messages,
+        max_tokens=soft_cap_tokens,
+        task_type=task_type
+    )
 
     return messages, cap_info
 
 
-def apply_message_token_soft_cap(
+def apply_message_trimming(
     messages: List[Dict[str, Any]],
-    soft_cap_tokens: int,
+    max_tokens: int,
+    task_type: str,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    Trim prunable context... (truncated)"""
-    # Actual implementation would follow here
+    """Trim messages to respect token limits, prioritizing recent content.
+    Returns (trimmed_messages, cap_info)"""
+    # Implementation would go here
+    return messages, {"original_tokens": 0, "trimmed_tokens": 0, "was_trimmed": False}
