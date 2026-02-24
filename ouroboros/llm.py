@@ -14,7 +14,7 @@ PREFER_OPENROUTER_MODELS = True
 MODEL_PRICING = {
     # OpenRouter standard models
     'anthropic/claude-3-sonnet': (3.0, 15.0),
-    'anthropic/claude-3-haiku': (0.25, 1.25),
+    'anthropic/claude-3-hauku': (0.25, 1.25),
     'openai/gpt-4o-mini': (0.15, 0.6),
     # Free tier models
     'stepfun/step-3.5-flash:free': (0.0, 0.0),
