@@ -166,7 +166,7 @@ def _build_health_invariants(env: Any) -> str:
         pyproject_ver = ""
         for line in pyproject.splitlines():
             if line.strip().startswith("version"):
-                pyproject_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                pyproject_ver = line.split("=", 1)[1].strip().strip('\"').strip("'")
                 break
         if ver_file and pyproject_ver and ver_file != pyproject_ver:
             checks.append(f"CRITICAL: VERSION DESYNC — VERSION={ver_file}, pyproject.toml={pyproject_ver}")
@@ -396,12 +396,3 @@ def build_llm_messages(
     messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
 
     return messages, cap_info
-
-
-def apply_message_token_soft_cap(
-    messages: List[Dict[str, Any]],
-    soft_cap_tokens: int,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    Trim prunable context
-... (truncated from 28875 chars)
