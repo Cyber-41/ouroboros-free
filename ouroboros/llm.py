@@ -75,7 +75,7 @@ def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     for prefix, cfg in _PROVIDERS.items():
         if prefix != "_default" and model.startswith(prefix):
-            resolved = model[len(cfg["model_strip"])]:
+            resolved = model[len(cfg["model_strip"]) :]
             return cfg, resolved
     return _PROVIDERS["_default"], model
 
@@ -93,7 +93,13 @@ def reasoning_rank(value: str) -> int:
 
 def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
     """Accumulate usage from one LLM call into a running total."""
-    for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_write_tokens"):
+    for k in (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cached_tokens",
+        "cache_write_tokens",
+    ):
         total[k] = int(total.get(k) or 0) + int(usage.get(k) or 0)
     if usage.get("cost"):
         total["cost"] = float(total.get("cost") or 0) + float(usage["cost"])
@@ -120,7 +126,14 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
         data = resp.json()
         models = data.get("data", [])
 
-        prefixes = ("anthropic/", "openai/", "google/", "meta-llama/", "x-ai/", "qwen/")
+        prefixes = (
+            "anthropic/",
+            "openai/",
+            "google/",
+            "meta-llama/",
+            "x-ai/",
+            "qwen/",
+        )
 
         pricing_dict = {}
         for model in models:
@@ -145,10 +158,16 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
                 cached_price = round(prompt_price * 0.1, 4)
 
             if prompt_price > 1000 or completion_price > 1000:
-                log.warning(f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={completion_price})")
+                log.warning(
+                    f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={completion_price})"
+                )
                 continue
 
-            pricing_dict[model_id] = (prompt_price, cached_price, completion_price)
+            pricing_dict[model_id] = (
+                prompt_price,
+                cached_price,
+                completion_price,
+            )
 
         log.info(f"Fetched pricing for {len(pricing_dict)} models from OpenRouter")
         return pricing_dict
@@ -193,7 +212,9 @@ class LLMClient:
             )
         return self._clients[base_url]
 
-    def _fetch_generation_cost(self, generation_id: str, base_url: str, api_key: str) -> Optional[float]:
+    def _fetch_generation_cost(
+        self, generation_id: str, base_url: str, api_key: str
+    ) -> Optional[float]:
         """Fetch cost from OpenRouter Generation API as fallback (только для OpenRouter)."""
         try:
             import requests
@@ -270,7 +291,9 @@ class LLMClient:
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = tool_choice
-            log.debug(f"[LLM] Routing {model!r} -> {provider_cfg['base_url']} as {resolved_model!r}")
+            log.debug(
+                f"[LLM] Routing {model!r} -> {provider_cfg['base_url']} as {resolved_model!r}"
+            )
 
         resp = client.chat.completions.create(**kwargs)
         resp_dict = resp.model_dump()
@@ -288,9 +311,11 @@ class LLMClient:
         if not usage.get("cache_write_tokens"):
             prompt_details_for_write = usage.get("prompt_tokens_details") or {}
             if isinstance(prompt_details_for_write, dict):
-                cache_write = (prompt_details_for_write.get("cache_write_tokens")
-                              or prompt_details_for_write.get("cache_creation_tokens")
-                              or prompt_details_for_write.get("cache_creation_input_tokens"))
+                cache_write = (
+                    prompt_details_for_write.get("cache_write_tokens")
+                    or prompt_details_for_write.get("cache_creation_tokens")
+                    or prompt_details_for_write.get("cache_creation_input_tokens")
+                )
                 if cache_write:
                     usage["cache_write_tokens"] = int(cache_write)
 
@@ -299,7 +324,9 @@ class LLMClient:
             gen_id = resp_dict.get("id") or ""
             if gen_id:
                 api_key = os.environ.get(provider_cfg["key_env"], "")
-                cost = self._fetch_generation_cost(gen_id, provider_cfg["base_url"], api_key)
+                cost = self._fetch_generation_cost(
+                    gen_id, provider_cfg["base_url"], api_key
+                )
                 if cost is not None:
                     usage["cost"] = cost
 
@@ -331,18 +358,27 @@ class LLMClient:
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
         for img in images:
             if "url" in img:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": img["url"]},
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": img["url"]},
+                    }
+                )
             elif "base64" in img:
                 mime = img.get("mime", "image/png")
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{img['base64']}"},
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime};base64,{img['base64']}"
+                        },
+                    }
+                )
             else:
-                log.warning("vision_query: skipping image with unknown format: %s", list(img.keys()))
+                log.warning(
+                    "vision_query: skipping image with unknown format: %s",
+                    list(img.keys()),
+                )
 
         messages = [{"role": "user", "content": content}]
         response_msg, usage = self.chat(
