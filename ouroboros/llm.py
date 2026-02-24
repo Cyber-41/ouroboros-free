@@ -32,6 +32,13 @@ DEFAULT_LIGHT_MODEL = "google/gemini-2.0-flash"
 # }
 # ---------------------------------------------------------------------------
 _PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "gemini-": {
+        "base_url":     "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "key_env":      "GOOGLE_API_KEY",
+        "model_strip":  "",
+        "headers":      {},
+        "openrouter":   False,
+    },
     "google/": {
         "base_url":     "https://generativelanguage.googleapis.com/v1beta/openai/",
         "key_env":      "GOOGLE_API_KEY",
@@ -70,7 +77,8 @@ def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     По имени модели возвращает (provider_config, resolved_model_name).
 
-    Например: "google/gemini-2.0-flash" -> (google_cfg, "gemini-2.0-flash")
+    Например: "gemini-3-flash" -> (google_cfg, "gemini-3-flash")
+              "google/gemini-2.0-flash" -> (google_cfg, "gemini-2.0-flash")
               "anthropic/claude-sonnet-4.6" -> (openrouter_cfg, "anthropic/claude-sonnet-4.6")
     """
     for prefix, cfg in _PROVIDERS.items():
@@ -162,6 +170,7 @@ class LLMClient:
     Multi-provider LLM client с единым интерфейсом.
 
     Роутинг по префиксу модели:
+      gemini-*   -> Google AI Studio (OpenAI-compat, бесплатный tier)
       google/*   -> Google AI Studio (OpenAI-compat, бесплатный tier)
       groq/*     -> Groq             (OpenAI-compat, бесплатный tier)
       together/* -> Together AI      (OpenAI-compat)
