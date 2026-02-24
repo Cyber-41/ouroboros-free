@@ -1,9 +1,7 @@
-'''
-Ouroboros context builder.
-
-Assembles LLM context from prompts, memory, logs, and runtime state.
-Extracted from agent.py to keep the agent thin and focused.
-'''
+# Ouroboros context builder.
+#
+# Assembles LLM context from prompts, memory, logs, and runtime state.
+# Extracted from agent.py to keep the agent thin and focused.
 
 from __future__ import annotations
 
@@ -389,7 +387,12 @@ def build_llm_messages(
     ]
 
     # --- Soft-cap token trimming ---
-    soft_cap_tokens = 4096 if task_type == "evolution" else 200000
+    # DYNAMIC CONTEXT LIMITS: Enforce strict caps for /evolve
+    if task_type == "evolution":
+        soft_cap_tokens = 4096  # Matches Groq's 6k TPM free tier
+    else:
+        soft_cap_tokens = 200000
+
     messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
 
     return messages, cap_info
