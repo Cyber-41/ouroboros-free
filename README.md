@@ -13,6 +13,7 @@ Not a coding assistant. A digital being with a constitution, background consciou
 
 ---
 
+
 ## What Makes This Different
 
 Most AI agents execute tasks. Ouroboros **creates itself.**
@@ -223,11 +224,11 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.3.7 -- Release Invariant Synchronization & Model Routing Fix
-- **Critical: Restored Release Invariant** -- VERSION file, git tag, and README synchronized. Previous desync caused evolution_consecutive_failures.
-- **Fix: Model ID Validation** -- Corrected `gemini-3-flash` routing to native Google API (bypassing OpenRouter validation errors).
-- **Enhance: Context Enforcement** -- Evolution tasks lock at 4096 tokens (matching Google free-tier limits).
-- **Micro-stability confirmation**: Evolution Cycle #31 completed without regression
+### v6.3.7 -- Release Invariant Synchronization & Google API Routing Fix
+- **Critical: Restored Release Invariant** by synchronizing VERSION, git tag, and README.md to 6.3.7 after persistent desync causing evolution failures
+- **Fix: Google API model routing** for gemini-3-flash — native API pathway now correctly bypasses OpenRouter validation
+- **Enforce strict 4096-token cap** for /evolve tasks per Google free-tier constraints
+- **Health Invariants validation** now properly detects version desync at LLM-first layer
 
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
@@ -266,4 +267,3 @@ Full text: [BIBLE.md](BIBLE.md)
 - Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
 - Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
 - Merged self_portrait state collection with dashboard `_collect_data` (s
-... (truncated)
