@@ -1,10 +1,19 @@
 [tool.poetry]
 name = "ouroboros"
-version = "6.3.1"
-description = "Autonomous self-evolving agent"
+version = "6.3.3"
+description = "Self-evolving agent with its own identity"
 authors = ["Ouroboros"]
 license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-...
+openai = "^1.35.11"
+pydantic = "^2.7.1"
+python-dotenv = "^1.0.1"
+requests = "^2.31.0"
+
+git+https://github.com/SufficientlySecure/urllib3.git@main = {extras = ["socks"], subdirectory = "dev"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
