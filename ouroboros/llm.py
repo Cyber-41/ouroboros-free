@@ -51,7 +51,6 @@ def _validate_google_model(model_id: str) -> bool:
         # Native Google API IDs (gemini-3-flash)
         return True
     return False
-
 def validate_model(model_id: str) -> bool:
     """Validate model ID with provider-specific rules."""
     # Bypass OpenRouter validation for native Google models
@@ -65,3 +64,12 @@ def validate_model(model_id: str) -> bool:
     # Standard OpenRouter model (anthropic/claude-...)
     parts = model_id.split('/')
     return len(parts) == 2 and model_id in MODEL_PRICING
+
+def get_api_endpoint(model_id: str) -> Tuple[str, Optional[str]]:
+    """Return the correct API endpoint and API key for the model."""
+    if model_id in GOOGLE_API_MODELS or (model_id.startswith('google/') and model_id.split('/')[1] in GOOGLE_API_MODELS):
+        return (
+            f"{GOOGLE_API_URL}/{model_id.split('/')[-1]}:generateContent",
+            GOOGLE_API_KEY
+        )
+    return (OPENROUTER_API_URL, OPENROUTER_API_KEY)
