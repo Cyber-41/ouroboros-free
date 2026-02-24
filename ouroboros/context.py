@@ -196,7 +196,7 @@ def _build_health_invariants(env: Any) -> str:
         for t in costly:
             checks.append(
                 f"WARNING: HIGH-COST TASK — task_id={t['task_id']} "
-                f"cost=${t['cost']:.2f} rounds={t['rounds']}"
+                f"cost=${t['cost']:.2f} rounds={t['rounds']}."
             )
         if not costly:
             checks.append("OK: no high-cost tasks (>$5)")
@@ -300,9 +300,6 @@ def build_llm_messages(
     # --- Extract task type for adaptive context ---
     task_type = str(task.get("type") or "user")
 
-    # Apply stricter token limit for /evolve tasks on free-tier models
-    SOFT_CAP = 4096 if task_type == "evolution" else 200000
-
     # --- Read base prompts and state ---
     base_prompt = _safe_read(
         env.repo_path("prompts/SYSTEM.md"),
@@ -392,7 +389,12 @@ def build_llm_messages(
     ]
 
     # --- Soft-cap token trimming ---
-    messages, cap_info = apply_message_token_soft_cap(messages, SOFT_CAP)
+    # IMPLEMENT DYNAMIC CONTEXT CAPS BASED ON TASK TYPE
+    if task_type == "evolution":
+        soft_cap_tokens = 4096  # Free-tier model constraints
+    else:
+        soft_cap_tokens = 200000
+    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
 
     return messages, cap_info
 
