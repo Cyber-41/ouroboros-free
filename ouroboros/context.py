@@ -1,7 +1,9 @@
-# Ouroboros context builder.
-#
-# Assembles LLM context from prompts, memory, logs, and runtime state.
-# Extracted from agent.py to keep the agent thin and focused.
+'''
+Ouroboros context builder.
+
+Assembles LLM context from prompts, memory, logs, and runtime state.
+Extracted from agent.py to keep the agent thin and focused.
+'''
 
 from __future__ import annotations
 
@@ -194,8 +196,7 @@ def _build_health_invariants(env: Any) -> str:
         for t in costly:
             checks.append(
                 f"WARNING: HIGH-COST TASK — task_id={t['task_id']} "
-                f"cost=${t['cost']:.2f} rounds={t['rounds']}"
-            )
+                f"cost=${t['cost']:.2f} rounds={t['rounds']}")
         if not costly:
             checks.append("OK: no high-cost tasks (>$5)")
     except Exception:
@@ -263,8 +264,7 @@ def _build_health_invariants(env: Any) -> str:
         if dupes:
             checks.append(
                 f"CRITICAL: DUPLICATE PROCESSING — {len(dupes)} message(s) "
-                f"appeared in multiple tasks: {', '.join(str(sorted(tids)) for tids in dupes.values())}"
-            )
+                f"appeared in multiple tasks: {', '.join(str(sorted(tids)) for tids in dupes.values())}")
         else:
             checks.append("OK: no duplicate message processing detected")
     except Exception:
@@ -386,13 +386,13 @@ def build_llm_messages(
         {"role": "user", "content": _build_user_content(task)},
     ]
 
-    # --- Soft-cap token trimming ---
-    # CORRECTED: Check for "evolve" (command name) not "evolution"
-    if task_type == "evolve":
-        soft_cap_tokens = 4096  # Matches Groq's 6k TPM free tier
+    # --- Dynamic context limits ---
+    if task_type == "evolution":
+        soft_cap_tokens = 4096  # Enforce strict cap for /evolve per free-tier TPM limits
     else:
-        soft_cap_tokens = 200000
+        soft_cap_tokens = 200000  # Default for non-evolution tasks
 
+    # --- Soft-cap token trimming ---
     messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
 
     return messages, cap_info
