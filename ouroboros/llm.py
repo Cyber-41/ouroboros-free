@@ -1,3 +1,11 @@
+'''
+Ouroboros — LLM client.
+
+The only module that communicates with the LLM API.
+Supports multiple providers via OpenAI-compatible endpoints.
+Contract: chat(), default_model(), available_models(), add_usage().
+'''
+
 from __future__ import annotations
 
 import logging
@@ -7,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
+# Use Google's officially supported free-tier model
 DEFAULT_LIGHT_MODEL = "google/gemini-2.5-flash"
 
 
@@ -66,7 +75,7 @@ def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     for prefix, cfg in _PROVIDERS.items():
         if prefix != "_default" and model.startswith(prefix):
-            resolved = model[len(cfg["model_strip"])]:
+            resolved = model[len(cfg["model_strip"])]:]
             return cfg, resolved
     return _PROVIDERS["_default"], model
 
@@ -170,7 +179,7 @@ class LLMClient:
             api_key = os.environ.get(provider_cfg["key_env"], "")
             if not api_key:
                 raise ValueError(
-                    f"API key not found. Set env var: {provider_cfg['key_env']}"
+                    f"API key not found. Set env var: {provider_cfg['key_env']}."
                 )
             self._clients[base_url] = OpenAI(
                 base_url=base_url,
