@@ -1,12 +1,3 @@
-'''
-Ouroboros context builder.
-
-Assembles LLM context from prompts, memory, logs, and runtime state.
-Extracted from agent.py to keep the agent thin and focused.
-'''
-
-from __future__ import annotations
-
 import copy
 import json
 import logging
@@ -20,7 +11,6 @@ from ouroboros.utils import (
 from ouroboros.memory import Memory
 
 log = logging.getLogger(__name__)
-
 
 def _build_user_content(task: Dict[str, Any]) -> Any:
     """Build user message content. Supports text + optional image."""
@@ -54,7 +44,6 @@ def _build_user_content(task: Dict[str, Any]) -> Any:
         "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}
     })
     return parts
-
 
 def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
     """Build the runtime context section (utc_now, repo_dir, drive_root, git_head, git_branch, task info, budget info)."""
@@ -92,7 +81,6 @@ def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
     runtime_ctx = json.dumps(runtime_data, ensure_ascii=False, indent=2)
     return "## Runtime context\n\n" + runtime_ctx
 
-
 def _build_memory_sections(memory: Memory) -> List[str]:
     """Build scratchpad, identity, dialogue summary sections."""
     sections = []
@@ -111,7 +99,6 @@ def _build_memory_sections(memory: Memory) -> List[str]:
             sections.append("## Dialogue Summary\n\n" + clip_text(summary_text, 20000))
 
     return sections
-
 
 def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[str]:
     """Build recent chat, recent progress, recent tools, recent events sections."""
@@ -150,13 +137,8 @@ def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[
 
     return sections
 
-
 def _build_health_invariants(env: Any) -> str:
-    """Build health invariants section for LLM-first self-detection.
-
-    Surfaces anomalies as informational text. The LLM (not code) decides
-    what action to take based on what it reads here. (Bible P0+P3)
-    """
+    """Build health invariants section for LLM-first self-detection.\n\n    Surfaces anomalies as informational text. The LLM (not code) decides\n    what action to take based on what it reads here. (Bible P0+P3)\n    """
     checks = []
 
     # 1. Version sync: VERSION file vs pyproject.toml
@@ -166,7 +148,7 @@ def _build_health_invariants(env: Any) -> str:
         pyproject_ver = ""
         for line in pyproject.splitlines():
             if line.strip().startswith("version"):
-                pyproject_ver = line.split("=", 1)[1].strip().strip('\"').strip("'")
+                pyproject_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
         if ver_file and pyproject_ver and ver_file != pyproject_ver:
             checks.append(f"CRITICAL: VERSION DESYNC — VERSION={ver_file}, pyproject.toml={pyproject_ver}")
@@ -276,7 +258,6 @@ def _build_health_invariants(env: Any) -> str:
         return ""
     return "## Health Invariants\n\n" + "\n".join(f"- {c}" for c in checks)
 
-
 def build_llm_messages(
     env: Any,
     memory: Memory,
@@ -284,15 +265,11 @@ def build_llm_messages(
     review_context_builder: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Build the full LLM message context for a task.
-
-    Args:
+    Build the full LLM message context for a task.\n\n    Args:
         env: Env instance with repo_path/drive_path helpers
         memory: Memory instance for scratchpad/identity/logs
         task: Task dict with id, type, text, etc.
-        review_context_builder: Optional callable for review tasks (signature: () -> str)
-
-    Returns:
+        review_context_builder: Optional callable for review tasks (signature: () -> str)\n\n    Returns:
         (messages, cap_info) tuple:
             - messages: List of message dicts ready for LLM
             - cap_info: Dict with token trimming metadata
@@ -388,16 +365,20 @@ def build_llm_messages(
         {"role": "user", "content": _build_user_content(task)},
     ]
 
-    # --- ENFORCED 4096-TOKEN SOFT CAP ---
-    messages, cap_info = apply_message_token_soft_cap(messages, 4096) 
+    # --- Soft-cap token trimming ---
+    soft_cap = 4096  # DYNAMIcally set for free models per knowledge_base validation  
+    if task_type == "evolution":
+        model_id = env.current_model # Assume model is tracked in env
+        free_models = ['groq/', 'google/', 'stepfun/']
+        if any(model_id.startswith(pf) for pf in free_models):
+            soft_cap = 4096
+    messages, cap_info = apply_message_token_soft_cap(messages, soft_cap)
 
     return messages, cap_info
-
 
 def apply_message_token_soft_cap(
     messages: List[Dict[str, Any]],
     soft_cap_tokens: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Trim prunable context
-... (truncated content)'''
+    Trim prunable context... (truncated)  
