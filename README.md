@@ -227,6 +227,7 @@ Full text: [BIBLE.md](BIBLE.md)
 - **Critical: Restored Release Invariant** -- VERSION file, git tag, and README synchronized. Previous desync caused evolution_consecutive_failures.
 - **Fix: Model ID Validation** -- Corrected `gemini-3-flash` routing to native Google API (bypassing OpenRouter validation errors).
 - **Enhance: Context Enforcement** -- Evolution tasks lock at 4096 tokens (matching Google free-tier limits).
+- **Micro-stability confirmation**: Evolution Cycle #31 completed without regression
 
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
@@ -265,4 +266,4 @@ Full text: [BIBLE.md](BIBLE.md)
 - Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
 - Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
 - Merged self_portrait state collection with dashboard `_collect_data` (s
-... (truncated from 20503 chars)
+... (truncated)
