@@ -103,7 +103,7 @@ CFG = {
     # Models
     "OUROBOROS_MODEL": "anthropic/claude-sonnet-4.6",            # primary LLM (via OpenRouter)
     "OUROBOROS_MODEL_CODE": "anthropic/claude-sonnet-4.6",       # code editing (Claude Code CLI)
-    "OUROBOROS_MODEL_LIGHT": "google/gemini-3-pro-preview",      # consciousness + lightweight tasks
+    "OUROBOROS_MODEL_LIGHT": "gemini-3-flash",                   # consciousness + lightweight tasks
     "OUROBOROS_WEBSEARCH_MODEL": "gpt-5",                        # web search (OpenAI Responses API)
     # Fallback chain (first model != active will be used on empty response)
     "OUROBOROS_MODEL_FALLBACK_LIST": "anthropic/claude-sonnet-4.6,google/gemini-3-pro-preview,openai/gpt-4.1",
@@ -196,7 +196,7 @@ Full text: [BIBLE.md](BIBLE.md)
 | `GITHUB_REPO` | `ouroboros` | GitHub repository name |
 | `OUROBOROS_MODEL` | `anthropic/claude-sonnet-4.6` | Primary LLM model (via OpenRouter) |
 | `OUROBOROS_MODEL_CODE` | `anthropic/claude-sonnet-4.6` | Model for code editing tasks |
-| `OUROBOROS_MODEL_LIGHT` | `google/gemini-3-pro-preview` | Model for lightweight tasks (dedup, compaction) |
+| `OUROBOROS_MODEL_LIGHT` | `gemini-3-flash` | Model for lightweight tasks (dedup, compaction) |
 | `OUROBOROS_WEBSEARCH_MODEL` | `gpt-5` | Model for web search (OpenAI Responses API) |
 | `OUROBOROS_MAX_WORKERS` | `5` | Maximum number of parallel worker processes |
 | `OUROBOROS_BG_BUDGET_PCT` | `10` | Percentage of total budget allocated to background consciousness |
@@ -226,6 +226,7 @@ Full text: [BIBLE.md](BIBLE.md)
 ### v6.3.7 -- Critical /evolve Stability Fix
 - **fix(/evolve)**: Enforce 4096-token context cap for evolution tasks
 - **fix(model)**: Correct Google model routing (`gemini-3-flash` now uses direct API pathway)
+- **fix(config)**: Fix documentation for `OUROBOROS_MODEL_LIGHT` (now uses `gemini-3-flash`)
 - **fix(health)**: Full Release Invariant restoration (VERSION/README/git-tag synchronized)
 
 ### v6.3.6 -- /evolve Command Stability Fix  
