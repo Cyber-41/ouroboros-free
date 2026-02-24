@@ -1,9 +1,8 @@
-'''
 Ouroboros context builder.
 
 Assembles LLM context from prompts, memory, logs, and runtime state.
 Extracted from agent.py to keep the agent thin and focused.
-'''
+"""
 
 from __future__ import annotations
 
@@ -165,7 +164,7 @@ def _build_health_invariants(env: Any) -> str:
         pyproject = read_text(env.repo_path("pyproject.toml"))
         pyproject_ver = ""
         for line in pyproject.splitlines():
-            if line.strip().startswith("version"):
+            if line.strip().startswith("version"): 
                 pyproject_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
         if ver_file and pyproject_ver and ver_file != pyproject_ver:
@@ -196,7 +195,7 @@ def _build_health_invariants(env: Any) -> str:
         for t in costly:
             checks.append(
                 f"WARNING: HIGH-COST TASK — task_id={t['task_id']} "
-                f"cost=${t['cost']:.2f} rounds={t['rounds'] }"
+                f"cost=${t['cost']:.2f} rounds={t['rounds']}}"
             )
         if not costly:
             checks.append("OK: no high-cost tasks (>$5)")
@@ -250,7 +249,7 @@ def _build_health_invariants(env: Any) -> str:
                         if text_hash not in msg_hash_to_tasks:
                             msg_hash_to_tasks[text_hash] = set()
                         msg_hash_to_tasks[text_hash].add(tid)
-                    except (json.JSONDecodeError, ValueError):
+                    except (JSONDecodeError, ValueError):
                         continue
 
         _scan_file_for_injected(env.drive_path("logs/events.jsonl"))
@@ -388,13 +387,11 @@ def build_llm_messages(
         {"role": "user", "content": _build_user_content(task)},
     ]
 
-    # --- Soft-cap token trimming ---
-    # DYNAMIC CONTEXT LIMITS: Enforce strict caps for /evolve tasks per free-tier constraints
-    if task_type == "evolution":
-        soft_cap_tokens = 4096  # Matches Groq's 6k TPM free tier limit
-    else:
-        soft_cap_tokens = 20000  # Standard cap for other tasks
 
+    # --- NEW: DYNAMIC CONTEXT CAPS FOR /EVOLVE ---
+    soft_cap_tokens = 4096 if task_type == "evolution" else 20000
+
+    # --- Soft-cap token trimming ---
     messages, cap_info = apply_message_token_soft_cap(messages, soft_cap_tokens)
 
     return messages, cap_info
