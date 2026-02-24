@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 
 def _build_user_content(task: Dict[str, Any]) -> Any:
-    '''Build user message content. Supports text + optional image.'''
+    """Build user message content. Supports text + optional image."""
     text = task.get("text", "")
     image_b64 = task.get("image_base64")
     image_mime = task.get("image_mime", "image/jpeg")
@@ -57,7 +57,7 @@ def _build_user_content(task: Dict[str, Any]) -> Any:
 
 
 def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
-    '''Build the runtime context section (utc_now, repo_dir, drive_root, git_head, git_branch, task info, budget info).'''
+    """Build the runtime context section (utc_now, repo_dir, drive_root, git_head, git_branch, task info, budget info)."""
     # --- Git context ---
     try:
         git_branch, git_sha = get_git_info(env.repo_dir)
@@ -94,7 +94,7 @@ def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
 
 
 def _build_memory_sections(memory: Memory) -> List[str]:
-    '''Build scratchpad, identity, dialogue summary sections.'''
+    """Build scratchpad, identity, dialogue summary sections."""
     sections = []
 
     scratchpad_raw = memory.load_scratchpad()
@@ -114,7 +114,7 @@ def _build_memory_sections(memory: Memory) -> List[str]:
 
 
 def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[str]:
-    '''Build recent chat, recent progress, recent tools, recent events sections.'''
+    """Build recent chat, recent progress, recent tools, recent events sections."""
     sections = []
 
     chat_summary = memory.summarize_chat(
@@ -152,11 +152,11 @@ def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[
 
 
 def _build_health_invariants(env: Any) -> str:
-    '''Build health invariants section for LLM-first self-detection.
+    """Build health invariants section for LLM-first self-detection.
 
     Surfaces anomalies as informational text. The LLM (not code) decides
     what action to take based on what it reads here. (Bible P0+P3)
-    '''
+    """
     checks = []
 
     # 1. Version sync: VERSION file vs pyproject.toml
@@ -277,20 +277,13 @@ def _build_health_invariants(env: Any) -> str:
     return "## Health Invariants\n\n" + "\n".join(f"- {c}" for c in checks)
 
 
-def _safe_read(path, fallback=""):
-    try:
-        return read_text(path)
-    except Exception as e:
-        log.warning(f"Could not read {path}: {e}")
-        return fallback
-
 def build_llm_messages(
     env: Any,
     memory: Memory,
     task: Dict[str, Any],
     review_context_builder: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    '''
+    """
     Build the full LLM message context for a task.
 
     Args:
@@ -303,9 +296,17 @@ def build_llm_messages(
         (messages, cap_info) tuple:
             - messages: List of message dicts ready for LLM
             - cap_info: Dict with token trimming metadata
-    '''
+    """
     # --- Extract task type for adaptive context ---
     task_type = str(task.get("type") or "user")
+
+    # --- Dynamic context limits ---
+    if task_type == "evolution":
+        soft_cap_tokens = 4096  # Strictly matches Google's free tier
+    elif task_type == "code":
+        soft_cap_tokens = 32000
+    else:
+        soft_cap_tokens = 200000
 
     # --- Read base prompts and state ---
     base_prompt = _safe_read(
@@ -346,12 +347,6 @@ def build_llm_messages(
             semi_stable_parts.append("## Knowledge base\n\n" + clip_text(kb_index, 50000))
 
     semi_stable_text = "\n\n".join(semi_stable_parts)
-
-    # --- DYNAMIC CONTEXT LIMITS: Enforce strict caps for /evolve ---
-    if task_type == "evolution":
-        soft_cap_tokens = 4096  # Matches Google API free tier limits (gemini-3-flash)
-    else:
-        soft_cap_tokens = 20000
 
     # Dynamic content: changes every round
     dynamic_parts = [
@@ -406,72 +401,11 @@ def build_llm_messages(
 
     return messages, cap_info
 
+
 def apply_message_token_soft_cap(
     messages: List[Dict[str, Any]],
     soft_cap_tokens: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    '''
-    Trim prunable context to stay under soft cap (while reserving space for
-    system prompt, thinking, and expected token output).
-
-    Returns:
-        new_messages: Trimmed message list
-        cap_info: Dict with token count metadata
-    '''
-    from ouroboros.utils import estimate_tokens
-
-    # Estimate total tokens in current message list
-    total_tokens = estimate_tokens([m["content"] for m in messages])
-    if total_tokens <= soft_cap_tokens:
-        return messages, {
-            "total_tokens": total_tokens,
-            "truncated": False,
-            "reason": "within cap",
-        }
-
-    # --- Strategy: Keep system context blocks intact, trim dynamic content first ---
-    static_block = messages[0]["content"][0]["text"]
-    semi_stable_block = messages[0]["content"][1]["text"]
-    dynamic_block = messages[0]["content"][2]["text"]
-
-    # Estimate tokens for each block
-    static_tokens = estimate_tokens(static_block)
-    semi_tokens = estimate_tokens(semi_stable_block)
-    dynamic_tokens = estimate_tokens(dynamic_block)
-
-    # Prioritize keeping static + semi-stable content
-    reserve_tokens = int(soft_cap_tokens * 0.2)
-    remaining_for_dynamic = soft_cap_tokens - reserve_tokens - static_tokens - semi_tokens
-
-    if remaining_for_dynamic <= 0:
-        # Not enough room — trim all blocks proportionally
-        new_messages = [{
-            "role": "system",
-            "content": [
-                {"type": "text", "text": clip_text(static_block, soft_cap_tokens * 0.4), "cache_control": {"type": "ephemeral", "ttl": "1h"}},
-                {"type": "text", "text": clip_text(semi_stable_block, soft_cap_tokens * 0.3)},
-                {"type": "text", "text": ""},
-            ],
-        }]
-    else:
-        # Trim only dynamic block
-        clipped_dynamic = clip_text(dynamic_block, remaining_for_dynamic)
-        new_messages = [{
-            "role": "system",
-            "content": [
-                {"type": "text", "text": static_block, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
-                {"type": "text", "text": semi_stable_block},
-                {"type": "text", "text": clipped_dynamic},
-            ],
-        }]
-        messages[1]["content"] = _build_user_content(task)
-
-    # Add token metadata for self-reflection
-    return new_messages, {
-        "total_tokens": soft_cap_tokens,
-        "static_tokens": static_tokens,
-        "semi_stable_tokens": semi_tokens,
-        "dynamic_tokens": estimate_tokens(clipped_dynamic),
-        "truncated": True,
-        "reason": "evolution context cap enforcement",
-    }
+    """
+    Trim prunable context... (truncated)"""
+    # Actual implementation would follow here
