@@ -7,7 +7,7 @@ from requests.models import Response
 from .utils import getenv_or_fail
 
 # Model routing configuration
-GOOGLE_API_MODELS = ['gemini-3-flash', 'gemini-2.5-pro']
+GOOGLE_API_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro']
 PREFER_OPENROUTER_MODELS = True
 
 # Pricing constants
@@ -23,12 +23,12 @@ MODEL_PRICING = {
     'qwen/qwen3-next-80b-a3b-instruct:free': (0.0, 0.0),
     'openai/gpt-oss-120b:free': (0.0, 0.0),
     # Google direct API models
-    'gemini-3-flash': (0.0, 0.0),
+    'gemini-2.5-flash': (0.0, 0.0),
     'gemini-2.5-pro': (0.0, 0.0),
 }
 
 # Default models
-DEFAULT_LIGHT_MODEL = 'gemini-3-flash'
+DEFAULT_LIGHT_MODEL = 'gemini-2.5-flash'
 DEFAULT_HEAVY_MODEL = 'gemini-2.5-pro'
 
 # Constants
@@ -48,13 +48,13 @@ def _validate_google_model(model_id: str) -> bool:
         # Handle OpenRouter-style IDs (google/gemini-2.5-flash)
         return parts[0] == 'google' and parts[1] in GOOGLE_API_MODELS
     elif model_id in GOOGLE_API_MODELS:
-        # Native Google API IDs (gemini-3-flash)
+        # Native Google API IDs (gemini-2.5-flash)
         return True
     return False
 def validate_model(model_id: str) -> bool:
     """Validate model ID with provider-specific rules."""
     # Bypass OpenRouter validation for native Google models
-    if model_id == 'gemini-3-flash' and not os.environ.get('PAID_TIER'):
+    if model_id == 'gemini-2.5-flash' and not os.environ.get('PAID_TIER'):
         return _validate_google_model(model_id)
     
     if ':' in model_id:
