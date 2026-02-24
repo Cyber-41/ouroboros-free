@@ -1,11 +1,11 @@
-## v6.3.7 -- Release Invariant Synchronization & Model Routing Fix
-- Critical: Restored VERSION/git tag/README synchronization
-- Enforced 4096-token cap for evolution tasks (matches service physics)
-- Native `gemini-2.5-flash` routing via Google API (replaces invalid gemini-3-flash)
+# Ouroboros
 
-## v6.3.6 -- Model Validation Logic
-- Fixed instrumentation errors for unknown model usage
-- Updated model routing to respect OpenRouter/Gemini boundaries
+## Version: 6.3.7
 
-## v6.2.10 -- Context Limit Enforcement
-- Implemented token caps to prevent constraint violations
+### v6.3.7 -- Release Invariant Synchronization & Model Routing Fix
+- Critical: Restored VERSION/git tag/README synchronization per Principle 7
+- Enforced 4096-token cap for evolution tasks (matches Google free-tier physics)
+- Native `gemini-2.5-flash` routing via Google API (no more OpenRouter validation errors)
+- Fixed model validation to recognize correct free-tier Google models
+
+[Full changelog continues...]
