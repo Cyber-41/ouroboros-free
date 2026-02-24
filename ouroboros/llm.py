@@ -5,7 +5,8 @@ def get_dynamic_context_limit(model: str) -> int:
     """
     limits = {
         'groq/': 4096,        # Free-tier TPM: 6k-12k
-        'google/': 4096,      # Gemini 1.5 Flash requires explicit cap
+        'google/': 4096,      # Legacy OpenRouter routing
+        'gemini-': 4096,      # Direct Google API models (2026)
         'stepfun/': 8192,     # Verified free tier (30k TPM)
         'arcee-ai/': 8192,    # Free preview tier
         'z-ai/': 8192,        # GLM-4.5-AIR free tier
@@ -24,16 +25,29 @@ def validate_free_tier_model(model: str) -> None:
     from ouroboros.memory import Memory
     mem = Memory()
 
-    # Special handling for direct Google API calls
-    if model.startswith('google/'):
-        # Convert to expected format: remove prefix for validation
-        google_model = model.replace('google/', '', 1)
+    # Special handling for direct Google API calls (2026 models)
+    if model.startswith('gemini-'):
         valid_google_models = [
+            'gemini-3-flash',
+            'gemini-2.5-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+            'gemini-1.0-pro',
+            'imagen-3',
+        ]
+        if model not in valid_google_models:
+            raise ValueError(f'Invalid Google model: {model} (use gemini-3-flash etc)')
+        return
+
+    # Legacy OpenRouter routing (remove after full Google API transition)
+    if model.startswith('google/'):
+        google_model = model.replace('google/', '', 1)
+        valid_google_models_legacy = [
             'gemini-1.5-flash',
             'gemini-1.5-pro',
             'gemini-1.0-pro',
         ]
-        if google_model not in valid_google_models:
+        if google_model not in valid_google_models_legacy:
             raise ValueError(f'Invalid Google model: {google_model} (use gemini-1.5-flash etc)')
         return
 
@@ -41,5 +55,3 @@ def validate_free_tier_model(model: str) -> None:
     valid_models = mem.load_knowledge('free-model-ids-openrouter').splitlines()
     if not any(model == vm.strip() for vm in valid_models):
         raise ValueError(f'Invalid free-tier model: {model}')
-    if model not in valid_models:
-        raise ValueError(f'Model version mismatch: use exact ID from knowledge_base')
