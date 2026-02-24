@@ -90,7 +90,7 @@ def _build_health_invariants(env: Any) -> str:
         pyproject_ver = ""
         for line in pyproject.splitlines():
             if line.strip().startswith("version"):
-                pyproject_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                pyproject_ver = line.split("=", 1)[1].strip().strip('\"').strip("'")
                 break
         if ver_file and pyproject_ver and ver_file != pyproject_ver:
             checks.append(f"CRITICAL: VERSION DESYNC — VERSION={ver_file}, pyproject.toml={pyproject_ver}")
@@ -197,7 +197,25 @@ def apply_message_token_soft_cap(
     messages: List[Dict[str, Any]],
     soft_cap_tokens: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    # Implementation from the original code was truncated, keeping as is for now
-    # but we've modified the soft_cap value to be dynamic
-    cap_info = {"requested": soft_cap_tokens, "actual": soft_cap_tokens}
-    return messages, cap_info
+    # ACTUAL IMPLEMENTATION TO ENFORCE TOKEN CAPS
+    total_tokens = estimate_tokens(messages)
+    cap_info = {"requested": soft_cap_tokens, "actual": total_tokens}
+
+    if total_tokens <= soft_cap_tokens:
+        return messages, cap_info
+
+    # Truncate from earliest messages until under cap
+    truncated = messages[:1]  # Keep system message
+    accumulated = estimate_tokens(truncated)
+
+    # Process user/assistant messages in reverse chronological order
+    for msg in reversed(messages[1:]):
+        msg_tokens = estimate_tokens([msg])
+        if accumulated + msg_tokens <= soft_cap_tokens:
+            truncated.insert(1, msg)
+            accumulated += msg_tokens
+        else:
+            break
+
+    cap_info["actual"] = accumulated
+    return truncated, cap_info
