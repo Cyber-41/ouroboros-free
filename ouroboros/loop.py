@@ -1,11 +1,3 @@
-'''Ouroboros — LLM tool loop.
-
-Core loop: send messages to LLM, execute tool calls, repeat until final response.
-Extracted from agent.py to keep the agent thin.
-'''
-
-from __future__ import annotations
-
 import json
 import os
 import pathlib
@@ -414,4 +406,10 @@ def _maybe_inject_self_check(
 
 
 def _setup_dynamic_to
-... (truncated from 32678 chars)
+# ENFORCE 4096 TOKEN CAP FOR ALL FREE-TIER MODELS
+if model.startswith(("stepfun/", "arcee-ai/", "groq/", "google/gemini-2.0-flash")):
+    max_tokens = 4096
+# ADDITIONAL VALIDATION AGAINST KNOWN-GOOD FREE MODELS
+valid_free_models = knowledge_read('free-model-ids-openrouter').splitlines()
+if model not in valid_free_models:
+    raise ValueError(f'Invalid free model: {model}')
