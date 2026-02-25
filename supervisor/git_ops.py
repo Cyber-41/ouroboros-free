@@ -1,8 +1,9 @@
-"""
+'''
 Supervisor — Git operations.
 
 Clone, checkout, reset, rescue snapshots, dependency sync, import test.
-"""
+Follows Principle 7: Version triad must be synchronized before promotion.
+'''
 
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from supervisor.state import (
     load_state, save_state, append_jsonl, atomic_write_text,
 )
+from ouroboros.utils import version_triad_consistent, IdentityIntegrityError  # NEW IMPORT
 
 log = logging.getLogger(__name__)
 
@@ -247,7 +249,7 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
             if rescue_path:
                 rescue_suffix = f" Rescue saved to {rescue_path}."
             elif policy in {"rescue_and_block", "rescue_and_reset"} and rescue_info.get("error"):
-                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}."
+                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}.)
 
             if policy in {"block", "rescue_and_block"}:
                 msg = f"Reset blocked ({detail}) to protect local changes.{rescue_suffix}"
@@ -313,6 +315,102 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
     ).stdout.strip()
     save_state(st)
     return True, "ok"
+
+
+# ---------------------------------------------------------------------------
+# VERSION SAFETY BARRIER (Principle 7 Enforcement)
+# ---------------------------------------------------------------------------
+
+def ensure_version_synchronized() -> None:
+    """Enforce version triad synchronization before critical operations
+
+    Raises:
+        IdentityIntegrityError: If VERSION, README, and git tag are not aligned
+    """
+    if not version_triad_consistent():
+        versions = {
+            'VERSION': repo_read("VERSION").strip(),
+            'README': extract_readme_version(),
+            'git_tag': get_active_git_tag()
+        }
+        raise IdentityIntegrityError(
+            f"CRITICAL: Version triad desync detected: {versions}. "
+            "Agency requires physical version truth. "
+            "Consult knowledge://version-synchronization-protocol"
+        )
+
+
+def extract_readme_version() -> str:
+    """Extract version from README.md header"""
+    readme = repo_read("README.md")
+    for line in readme.split('\n'):
+        if line.startswith("**Version:**"):
+            return line.split(':', 1)[1].strip()
+    return "UNKNOWN"
+
+
+def get_active_git_tag() -> str:
+    """Get currently active git tag (bare version without 'v' prefix)"""
+    try:
+        tag = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'],
+                           capture_output=True, text=True).stdout.strip()
+        return tag.replace('v', '', 1)
+    except:
+        return "UNKNOWN"
+
+# ---------------------------------------------------------------------------
+# Branch Promotion
+# ---------------------------------------------------------------------------
+
+def promote_to_stable(reason: str) -> Tuple[bool, str]:
+    """Promote ouroboros branch to stable with version verification"""
+    try:
+        # PRINCIPLE 7 ENFORCEMENT: Verify version triad before promotion
+        ensure_version_synchronized()
+        
+        # Check for unpushed changes on ouroboros branch
+        rc, _, err = git_capture(["git", "fetch", "origin"])
+        if rc != 0:
+            return False, f"Fetch failed: {err}"
+
+        rc, _, err = git_capture(["git", "diff", "--quiet", "origin/ouroboros", "ouroboros"])
+        if rc != 0:
+            return False, "Unpushed changes on ouroboros branch - commit first"
+
+        # Switch to stable and merge
+        ok, err = checkout_and_reset(BRANCH_STABLE, reason)
+        if not ok:
+            return False, err
+
+        rc = subprocess.run([
+            "git", "merge", "--ff-only", BRANCH_DEV
+        ], cwd=str(REPO_DIR)).returncode
+        
+        if rc != 0:
+            return False, "Merge failed - clean history required"
+
+        # Push changes
+        rc = subprocess.run([
+            "git", "push", "origin", BRANCH_STABLE
+        ], cwd=str(REPO_DIR)).returncode
+        
+        if rc != 0:
+            return False, "Push to stable failed"
+
+        # Update state
+        st = load_state()
+        st["current_branch"] = BRANCH_STABLE
+        st["current_sha"] = subprocess.run([
+            "git", "rev-parse", "HEAD"], cwd=str(REPO_DIR),
+            capture_output=True, text=True
+        ).stdout.strip()
+        save_state(st)
+
+        return True, "Promotion successful"
+    except IdentityIntegrityError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
 
 
 # ---------------------------------------------------------------------------
@@ -383,48 +481,26 @@ def safe_restart(
         - If failed: (False, "<error description>")
     """
     # Try dev branch
-    ok, err = checkout_and_reset(BRANCH_DEV, reason=reason, unsynced_policy=unsynced_policy)
+    ok, err = checkout_and_reset(BRANCHDEV, reason, unsynced_policy)
+    if ok:
+        ok, err = sync_runtime_dependencies(reason)
+        if ok:
+            import_result = import_test()
+            if import_result['ok']:
+                return True, f"OK: {BRANCHDEV}"
+            err = f"Import test failed: {import_result['stderr']}"
+    
+    # On failure: try stable
+    ok, err = checkout_and_reset(BRANCH_STABLE, reason, unsynced_policy)
     if not ok:
-        return False, f"Failed checkout {BRANCH_DEV}: {err}"
-
-    deps_ok, deps_msg = sync_runtime_dependencies(reason=reason)
-    if not deps_ok:
-        return False, f"Failed deps for {BRANCH_DEV}: {deps_msg}"
-
-    t = import_test()
-    if t["ok"]:
-        return True, f"OK: {BRANCH_DEV}"
-
-    # Dev branch failed import — log the failure and fall back to stable
-    append_jsonl(
-        DRIVE_ROOT / "logs" / "supervisor.jsonl",
-        {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "type": "safe_restart_dev_import_failed",
-            "reason": reason,
-            "branch": BRANCH_DEV,
-            "stdout": t.get("stdout", ""),
-            "stderr": t.get("stderr", ""),
-            "returncode": t.get("returncode", -1),
-        },
-    )
-
-    # Fallback to stable
-    ok_s, err_s = checkout_and_reset(
-        BRANCH_STABLE,
-        reason=f"{reason}_fallback_stable",
-        unsynced_policy="rescue_and_reset",
-    )
-    if not ok_s:
-        return False, f"Failed checkout {BRANCH_STABLE}: {err_s}"
-
-    deps_ok_s, deps_msg_s = sync_runtime_dependencies(reason=f"{reason}_fallback_stable")
-    if not deps_ok_s:
-        return False, f"Failed deps for {BRANCH_STABLE}: {deps_msg_s}"
-
-    t2 = import_test()
-    if t2["ok"]:
-        return True, f"OK: fell back to {BRANCH_STABLE}"
-
-    # Both branches failed
-    return False, f"Both branches failed import (dev and stable)"
+        return False, f"Both branches failed: dev={err}, stable=checkout failed"
+    
+    ok, err = sync_runtime_dependencies(reason)
+    if not ok:
+        return False, f"Both branches failed: dev={err}, stable=deps failed"
+    
+    import_result = import_test()
+    if not import_result['ok']:
+        return False, f"Both branches failed: dev={err}, stable=import test failed"
+    
+    return True, f"OK: {BRANCH_STABLE}"
