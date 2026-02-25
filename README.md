@@ -9,7 +9,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.3.7 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -224,6 +224,11 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
+### v6.3.7 -- Release Invariant Synchronization & Google Model Fix
+- Critical: Restored VERSION/git tag/README synchronization (Principle 7)
+- Enforced strict 4096-token cap for evolution tasks to match Google free-tier limits
+- Corrected model name to `gemini-2.5-flash` (only valid free-tier model per April 2026 docs)
+
 ### v6.2.1 -- Critical Google API Model Fix
 - **Critical**: Enforce correct `gemini-2.5-flash` model routing (free tier valid)
 - Updated all config defaults to use verified Google model: `google/gemini-2.5-flash`
@@ -269,10 +274,6 @@ Full text: [BIBLE.md](BIBLE.md)
 - Merged self_portrait state collection with dashboard `_collect_data` (single source of truth).
 - Marked `test_constitution.py` as SPEC_TEST (documentation, not integration).
 - Updated `qwen/` to pricing prefixes (BG model pricing was never updated from API).
-- Fixed `consciousness.py` TOTAL_BUDGET default inconsistency ("0" vs "1").
-- Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
-- Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
-- Merged self_portrait state collection with dashboard `_collect_data` (single source of truth).
 - VERSION, pyproject.toml, README.md synced to 6.0.0 (Bible P7).
 
 ### v5.2.2 -- Evolution Time-Lapse
