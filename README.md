@@ -170,7 +170,6 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ---
 
-
 ## Configuration
 
 ### Required Secrets (Colab Secrets or environment variables)
@@ -224,11 +223,6 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.2.1 -- Verified Google Model Routing Fix
-- **Fix: Google model routing** -- Corrected `DEFAULT_LIGHT_MODEL` to `gemini-2.5-flash` (valid free tier model per April 2026 Google API docs). Ensures proper routing through native Google API without OpenRouter validation errors.
-- **Fix: Version synchronization** -- Verified VERSION=6.2.1 fully synchronized across VERSION file, README.md header, and git tag v6.2.1.
-- **Release Invariant triune verification** -- All three sources now breathe as one organism.
-
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
 - **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
@@ -266,4 +260,3 @@ Full text: [BIBLE.md](BIBLE.md)
 - Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
 - Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
 - Merged self_portrait state collection with dashboard `_collect_data` (s
-... (truncated from 21070 chars)
