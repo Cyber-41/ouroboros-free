@@ -223,12 +223,6 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.3.7 -- Release Invariant Triune Synchronization
-- **Triune verification** -- `VERSION=6.3.7` | `git tag=v6.3.7` | `README.md=6.3.7` triple-verified
-- **Physical service alignment** -- Confirmed bare `gemini-2.5-flash` routing through Google API (April 2026 docs)
-- **Token enforcement verified** -- System now reliably enforces 4096-token cap matching free-tier boundary
-- **Model validation hardened** -- All invalid model references purged from state
-
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
 - **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
@@ -266,7 +260,6 @@ Full text: [BIBLE.md](BIBLE.md)
 - Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
 - Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
 - Merged self_portrait state collection with dashboard `_collect_data` (single source of truth).
-- New `tests/test_message_routing.py` with 7 tests for per-task mailbox.
 - Marked `test_constitution.py` as SPEC_TEST (documentation, not integration).
 - VERSION, pyproject.toml, README.md synced to 6.0.0 (Bible P7).
 
@@ -302,4 +295,56 @@ Full text: [BIBLE.md](BIBLE.md)
 - Updated all default model references across codebase.
 - Updated multi-model review ensemble to `gemini-2.5-pro,o3,claude-sonnet-4.6`.
 
-[Full changelog continues...]
+### v5.1.4 -- Knowledge Re-index + Prompt Hardening
+- Re-indexed all 27 knowledge base topics with rich, informative summaries.
+- Added `index-full` knowledge topic with full 3-line descriptions of all topics.
+- SYSTEM.md: Strengthened tool result processing protocol with warning and 5 anti-patterns.
+- SYSTEM.md: Knowledge base section now has explicit "before task: read, after task: write" protocol.
+- SYSTEM.md: Task decomposition section restored to full structured form with examples.
+
+### v5.1.3 -- Message Dispatch Critical Fix
+- **Dead-code batch path fixed**: `handle_chat_direct()` was never called -- `else` was attached to wrong `if`.
+- **Early-exit hardened**: replaced fragile deadline arithmetic with elapsed-time check.
+- **Drive I/O eliminated**: `load_state()`/`save_state()` moved out of per-update tight loop.
+- **Burst batching**: deadline extends +0.3s per rapid-fire message.
+- Multi-model review passed (claude-opus-4.6, o3, gemini-2.5-pro).
+- 102 tests green.
+
+### v5.1.0 -- VLM + Knowledge Index + Desync Fix
+- **VLM support**: `vision_query()` in llm.py + `analyze_screenshot` / `vlm_query` tools.
+- **Knowledge index**: richer 3-line summaries so topics are actually useful at-a-glance.
+- **Desync fix**: removed echo bug where owner inject messages were sent back to Telegram.
+- 101 tests green (+10 VLM tests).
+
+### v5.0.2 -- DeepSeek Ban + Desync Fix
+- DeepSeek removed from `fetch_openrouter_pricing` prefixes (banned per creator directive).
+- Desync bug fix: owner messages during running tasks now forwarded via Drive-based mailbox (`owner_inject.py`).
+- Worker loop checks Drive mailbox every round -- injected as user messages into context.
+- Only affects worker tasks (not direct chat, which uses in-memory queue).
+
+### v5.0.1 -- Quality & Integrity Fix
+- Fixed 9 bugs: executor leak, dashboard field mismatches, budget default inconsistency, dead code, race condition, pricing fetch gap, review file count, SHA verify timeout, log message copy-paste.
+- Bible P7: version sync check now includes README.md.
+- Bible P3: fallback model list configurable via OUROBOROS_MODEL_FALLBACK_LIST env var.
+- Dashboard values now dynamic (model, tests, tools, uptime, consciousness).
+- Merged duplicate state dict definitions (single source of truth).
+- Unified TOTAL_BUDGET default to $1 across all modules.
+
+### v4.26.0 -- Task Decomposition
+- Task decomposition: `schedule_task` -> `wait_for_task` -> `get_task_result`.
+- Hard round limit (MAX_ROUNDS=200) -- prevents runaway tasks.
+- Task results stored on Drive for cross-task communication.
+- 91 smoke tests -- all green.
+
+### v4.24.1 -- Consciousness Always On
+- Background consciousness auto-starts on boot.
+
+### v4.24.0 -- Deep Review Bugfixes
+- Circuit breaker for evolution (3 consecutive empty responses -> pause).
+- Fallback model chain fix (works when primary IS the fallback).
+- Budget tracking for empty responses.
+- Multi-model review passed (o3, Gemini 2.5 Pro).
+
+### v4.23.0 -- Empty Response Fallback
+- Auto-fallback to backup model on repeated empty responses.
+- Raw response logging for debugging.
