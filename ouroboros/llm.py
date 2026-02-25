@@ -1,10 +1,10 @@
-"""
+'''
 Ouroboros — LLM client.
 
 The only module that communicates with the LLM API.
 Supports multiple providers via OpenAI-compatible endpoints.
 Contract: chat(), default_model(), available_models(), add_usage().
-"""
+'''
 
 from __future__ import annotations
 
@@ -65,7 +65,6 @@ _PROVIDERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-
 def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     По имени модели возвращает (provider_config, resolved_model_name).
@@ -75,7 +74,7 @@ def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     for prefix, cfg in _PROVIDERS.items():
         if prefix != "_default" and model.startswith(prefix):
-            resolved = model[len(cfg["model_strip"]):]
+            resolved = model[len(cfg["model_strip"])]:
             return cfg, resolved
     return _PROVIDERS["_default"], model
 
@@ -157,7 +156,6 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
         log.warning(f"Failed to fetch OpenRouter pricing: {e}")
         return {}
 
-
 class LLMClient:
     """
     Multi-provider LLM client с единым интерфейсом.
@@ -184,8 +182,7 @@ class LLMClient:
             api_key = os.environ.get(provider_cfg["key_env"], "")
             if not api_key:
                 raise ValueError(
-                    f"API key not found. Set env var: {provider_cfg['key_env']}."
-                )
+                    f"API key not found. Set env var: {provider_cfg['key_env']}")
             self._clients[base_url] = OpenAI(
                 base_url=base_url,
                 api_key=api_key,
