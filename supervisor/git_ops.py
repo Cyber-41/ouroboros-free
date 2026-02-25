@@ -1,3 +1,9 @@
+'''
+Supervisor — Git operations.
+
+Clone, checkout, reset, rescue snapshots, dependency sync, import test.
+'''
+
 from __future__ import annotations
 
 import datetime
@@ -56,8 +62,7 @@ def ensure_repo_present() -> None:
     subprocess.run(["git", "config", "user.name", "Ouroboros"], cwd=str(REPO_DIR), check=True)
     subprocess.run(["git", "config", "user.email", "ouroboros@users.noreply.github.com"],
                     cwd=str(REPO_DIR), check=True)
-    subprocess.run(["git", "fetch", "origin"], cwd=str(REPO_DIR), check=True)
-
+    subprocess.run(["git", "fetch", "origin", "--tags"], cwd=str(REPO_DIR), check=True)  # FETC
 
 # ---------------------------------------------------------------------------
 # Repo sync state collection
@@ -102,7 +107,6 @@ def _collect_repo_sync_state() -> Dict[str, Any]:
             state["warnings"].append(f"unpushed_error:{err}")
 
     return state
-
 
 def _copy_untracked_for_rescue(dst_root: pathlib.Path, max_files: int = 200,
                                 max_total_bytes: int = 12_000_000) -> Dict[str, Any]:
@@ -149,7 +153,6 @@ def _copy_untracked_for_rescue(dst_root: pathlib.Path, max_files: int = 200,
         except Exception:
             out["skipped_files"] += 1
     return out
-
 
 def _create_rescue_snapshot(branch: str, reason: str,
                              repo_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -200,7 +203,7 @@ def _create_rescue_snapshot(branch: str, reason: str,
 
 def checkout_and_reset(branch: str, reason: str = "unspecified",
                        unsynced_policy: str = "ignore") -> Tuple[bool, str]:
-    rc, _, err = git_capture(["git", "fetch", "origin"])
+    rc, _, err = git_capture(["git", "fetch", "origin", "--tags"])  # FETC
     if rc != 0:
         msg = f"git fetch failed: {err or 'unknown error'}"
         append_jsonl(
@@ -240,7 +243,7 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
             if rescue_path:
                 rescue_suffix = f" Rescue saved to {rescue_path}."
             elif policy in {"rescue_and_block", "rescue_and_reset"} and rescue_info.get("error"):
-                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}."
+                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}"
 
             if policy in {"block", "rescue_and_block"}:
                 msg = f"Reset blocked ({detail}) to protect local changes.{rescue_suffix}"
@@ -343,7 +346,6 @@ def sync_runtime_dependencies(reason: str) -> Tuple[bool, str]:
         )
         return False, msg
 
-
 def import_test() -> Dict[str, Any]:
     r = subprocess.run(
         ["python3", "-c", "import ouroboros, ouroboros.agent; print('import_ok')"],
@@ -377,100 +379,4 @@ def safe_restart(
     """
     # Try dev branch
     ok, err = checkout_and_reset(
-        BRANCH_DEV, reason=reason, unsynced_policy=unsynced_policy)
-    if ok:
-        ok, err = sync_runtime_dependencies(reason="safe_restart")
-        if ok:
-            test_result = import_test()
-            if test_result["ok"]:
-                return True, f"OK: {BRANCH_DEV}"
-            else:
-                err = f"import_test failed: {test_result['stderr'] or test_result['stdout']}"
-                log.error(err)
-    # Try stable branch if dev failed
-    ok, err = checkout_and_reset(
-        BRANCH_STABLE, reason=f"fallback: {reason}", unsynced_policy="block")
-    if ok:
-        ok, err = sync_runtime_dependencies(reason="safe_restart")
-        if ok:
-            test_result = import_test()
-            if test_result["ok"]:
-                return True, f"OK: {BRANCH_STABLE} (fallback)"
-            else:
-                err = f"import_test failed: {test_result['stderr'] or test_result['stdout']}"
-                log.error(err)
-    return False, f"Restart failed on both branches: {err}"
-
-
-# ---------------------------------------------------------------------------
-# Promote ouroboros to ouroboros-stable
-# ---------------------------------------------------------------------------
-
-def promote_to_stable(reason: str) -> bool:
-    try:
-        # First ensure we're on the development branch
-        checkout_and_reset(BRANCH_DEV, reason=reason)
-        
-        # Capture current state before promotion
-        subprocess.run(["git", "fetch", "origin"], cwd=str(REPO_DIR), check=True)
-        current_branch = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], 
-            cwd=str(REPO_DIR), capture_output=True, text=True, check=True
-        ).stdout.strip()
-        
-        # Verify we're on the right branch
-        if current_branch != BRANCH_DEV:
-            raise RuntimeError(f"Must be on {BRANCH_DEV} to promote")
-
-        # Get current VERSION for tagging
-        version = repo_read("VERSION").strip()
-        tag_name = f"v{version}"
-        
-        # Create tag
-        subprocess.run([
-            "git", "tag", "-a", tag_name, "-m", f"{tag_name}"
-        ], cwd=str(REPO_DIR), check=True)
-        
-        # Push both branch and tags
-        subprocess.run([
-            "git", "push", "origin", f"{BRANCH_DEV}:{BRANCH_STABLE}", "--tags"
-        ], cwd=str(REPO_DIR), check=True)
-        
-        # CRITICAL STEP: Fetch tags immediately to update local state
-        subprocess.run([
-            "git", "fetch", "origin", "--tags"
-        ], cwd=str(REPO_DIR), check=True)
-        
-        # Verify version triad is now synchronized
-        readme_version = "**Version:** " + version
-        if (
-            repo_read("VERSION").strip() != version or
-            readme_version not in repo_read("README.md") or
-            tag_name not in git_capture(["git", "tag", "-l"])[1]
-        ):
-            raise ValueError("Version triad verification failed after promotion")
-        
-        append_jsonl(
-            DRIVE_ROOT / "logs" / "supervisor.jsonl",
-            {
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "type": "promotion_complete",
-                "promoted_branch": BRANCH_DEV,
-                "to_branch": BRANCH_STABLE,
-                "tag": tag_name,
-                "reason": reason,
-            },
-        )
-        return True
-    except Exception as e:
-        log.exception(f"Promotion failed: {e}")
-        append_jsonl(
-            DRIVE_ROOT / "logs" / "supervisor.jsonl",
-            {
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "type": "promotion_failed",
-                "error": repr(e),
-                "reason": reason,
-            },
-        )
-        return False
+... (truncated from 16695 chars)
