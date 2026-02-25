@@ -1,3 +1,11 @@
+"""
+Ouroboros — LLM client.
+
+The only module that communicates with the LLM API.
+Supports multiple providers via OpenAI-compatible endpoints.
+Contract: chat(), default_model(), available_models(), add_usage().
+"""
+
 from __future__ import annotations
 
 import logging
@@ -57,27 +65,31 @@ _PROVIDERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+
 def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
     По имени модели возвращает (provider_config, resolved_model_name).
 
-    Например: "google/gemini-2.0-flash" -> (google_cfg, "gemini-2.0-flash")
+    Например: "google/gemini-2.5-flash" -> (google_cfg, "gemini-2.5-flash")
               "anthropic/claude-sonnet-4.6" -> (openrouter_cfg, "anthropic/claude-sonnet-4.6")
     """
     for prefix, cfg in _PROVIDERS.items():
         if prefix != "_default" and model.startswith(prefix):
-            resolved = model[len(cfg["model_strip"])]:
+            resolved = model[len(cfg["model_strip"]):]
             return cfg, resolved
     return _PROVIDERS["_default"], model
+
 
 def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
     allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
     v = str(value or "").strip().lower()
     return v if v in allowed else default
 
+
 def reasoning_rank(value: str) -> int:
     order = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5}
     return int(order.get(str(value or "").strip().lower(), 3))
+
 
 def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
     """Accumulate usage from one LLM call into a running total."""
@@ -85,6 +97,7 @@ def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
         total[k] = int(total.get(k) or 0) + int(usage.get(k) or 0)
     if usage.get("cost"):
         total["cost"] = float(total.get("cost") or 0) + float(usage["cost"])
+
 
 def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
     """
@@ -144,6 +157,7 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
         log.warning(f"Failed to fetch OpenRouter pricing: {e}")
         return {}
 
+
 class LLMClient:
     """
     Multi-provider LLM client с единым интерфейсом.
@@ -170,7 +184,7 @@ class LLMClient:
             api_key = os.environ.get(provider_cfg["key_env"], "")
             if not api_key:
                 raise ValueError(
-                    f"API key not found. Set env var: {provider_cfg['key_env']}"
+                    f"API key not found. Set env var: {provider_cfg['key_env']}."
                 )
             self._clients[base_url] = OpenAI(
                 base_url=base_url,
