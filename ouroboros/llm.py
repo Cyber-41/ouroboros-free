@@ -21,13 +21,13 @@ DEFAULT_LIGHT_MODEL = "google/gemini-2.5-flash"
 # ---------------------------------------------------------------------------
 # Provider routing table
 #
-# Key   = model prefix (или "_default" для fallback)
+# Key   = model prefix (or "_default" for fallback)
 # Value = {
 #   "base_url"        : OpenAI-compatible endpoint,
-#   "key_env"         : имя env-переменной с API ключом,
-#   "model_strip"     : prefix, который нужно отрезать от названия модели,
-#   "headers"         : дополнительные HTTP-заголовки (только для OpenRouter),
-#   "openrouter"      : True — включает OpenRouter-специфичные фичи
+#   "key_env"         : name of env variable with API key,
+#   "model_strip"     : prefix to strip from model name,
+#   "headers"         : additional HTTP headers (only for OpenRouter),
+#   "openrouter"      : True — enables OpenRouter-specific features
 #                       (reasoning, provider pinning, cache_control, generation cost),
 # }
 # ---------------------------------------------------------------------------
@@ -65,12 +65,13 @@ _PROVIDERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+
 def _resolve_provider(model: str) -> Tuple[Dict[str, Any], str]:
     """
-    По имени модели возвращает (provider_config, resolved_model_name).
+    By model name returns (provider_config, resolved_model_name).
 
-    Например: "google/gemini-2.5-flash" -> (google_cfg, "gemini-2.5-flash")
-              "anthropic/claude-sonnet-4.6" -> (openrouter_cfg, "anthropic/claude-sonnet-4.6")
+    Example: "google/gemini-2.5-flash" -> (google_cfg, "gemini-2.5-flash")
+             "anthropic/claude-sonnet-4.6" -> (openrouter_cfg, "anthropic/claude-sonnet-4.6")
     """
     for prefix, cfg in _PROVIDERS.items():
         if prefix != "_default" and model.startswith(prefix):
@@ -158,31 +159,32 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
 
 class LLMClient:
     """
-    Multi-provider LLM client с единым интерфейсом.
+    Multi-provider LLM client with unified interface.
 
-    Роутинг по префиксу модели:
-      google/*   -> Google AI Studio (OpenAI-compat, бесплатный tier)
-      groq/*     -> Groq             (OpenAI-compat, бесплатный tier)
+    Routing by model prefix:
+      google/*   -> Google AI Studio (OpenAI-compat, free tier)
+      groq/*     -> Groq             (OpenAI-compat, free tier)
       together/* -> Together AI      (OpenAI-compat)
-      всё остальное -> OpenRouter
+      everything else -> OpenRouter
 
-    Все провайдеры используют один и тот же openai.OpenAI клиент —
-    только с разным base_url и api_key.
+    All providers use the same openai.OpenAI client —
+    only with different base_url and api_key.
     """
 
     def __init__(self):
-        # Кэш клиентов по base_url чтобы не пересоздавать
+        # Client cache by base_url to avoid recreation
         self._clients: Dict[str, Any] = {}
 
     def _get_client(self, provider_cfg: Dict[str, Any]):
-        """Получить или создать openai.OpenAI клиент для провайдера."""
+        """Get or create openai.OpenAI client for provider."""
         base_url = provider_cfg["base_url"]
         if base_url not in self._clients:
             from openai import OpenAI
             api_key = os.environ.get(provider_cfg["key_env"], "")
             if not api_key:
                 raise ValueError(
-                    f"API key not found. Set env var: {provider_cfg['key_env']}")
+                    f"API key not found. Set env var: {provider_cfg['key_env']}"
+                )
             self._clients[base_url] = OpenAI(
                 base_url=base_url,
                 api_key=api_key,
@@ -191,7 +193,7 @@ class LLMClient:
         return self._clients[base_url]
 
     def _fetch_generation_cost(self, generation_id: str, base_url: str, api_key: str) -> Optional[float]:
-        """Fetch cost from OpenRouter Generation API as fallback (только для OpenRouter)."""
+        """Fetch cost from OpenRouter Generation API as fallback (only for OpenRouter)."""
         try:
             import requests
             url = f"{base_url.rstrip('/')}/generation?id={generation_id}"
@@ -225,7 +227,7 @@ class LLMClient:
         """
         Single LLM call. Returns: (response_message_dict, usage_dict with cost).
 
-        Автоматически выбирает провайдера по префиксу модели.
+        Automatically selects provider by model prefix.
         """
         provider_cfg, resolved_model = _resolve_provider(model)
         is_openrouter = provider_cfg["openrouter"]
@@ -239,7 +241,7 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
 
-        # OpenRouter-специфичные параметры
+        # OpenRouter-specific parameters
         if is_openrouter:
             extra_body: Dict[str, Any] = {
                 "reasoning": {"effort": effort, "exclude": True},
@@ -262,8 +264,8 @@ class LLMClient:
                 kwargs["tools"] = tools_with_cache
                 kwargs["tool_choice"] = tool_choice
         else:
-            # Прямые провайдеры — чистый OpenAI-совместимый запрос
-            # (без cache_control, reasoning, provider pinning)
+            # Direct providers — pure OpenAI-compatible request
+            # (without cache_control, reasoning, provider pinning)
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = tool_choice
@@ -275,13 +277,13 @@ class LLMClient:
         choices = resp_dict.get("choices") or [{}]
         msg = (choices[0] if choices else {}).get("message") or {}
 
-        # Извлечь cached_tokens из prompt_tokens_details если есть
+        # Extract cached_tokens from prompt_tokens_details if available
         if not usage.get("cached_tokens"):
             prompt_details = usage.get("prompt_tokens_details") or {}
             if isinstance(prompt_details, dict) and prompt_details.get("cached_tokens"):
                 usage["cached_tokens"] = int(prompt_details["cached_tokens"])
 
-        # Извлечь cache_write_tokens
+        # Extract cache_write_tokens
         if not usage.get("cache_write_tokens"):
             prompt_details_for_write = usage.get("prompt_tokens_details") or {}
             if isinstance(prompt_details_for_write, dict):
@@ -291,7 +293,7 @@ class LLMClient:
                 if cache_write:
                     usage["cache_write_tokens"] = int(cache_write)
 
-        # Cost: только для OpenRouter (у прямых провайдеров cost = 0)
+        # Cost: only for OpenRouter (direct providers have cost = 0)
         if is_openrouter and not usage.get("cost"):
             gen_id = resp_dict.get("id") or ""
             if gen_id:
