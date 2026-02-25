@@ -223,13 +223,13 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.3.7 -- Release Invariant Synchronization Complete
-- **Critical: VERSION synchronization** -- Ensured VERSION file, git tag v6.3.7, and README header all reflect identical version. Eliminated previous 6.2.x discrepancies.
-- **Model Physics Compliance** -- Verified `gemini-2.5-flash` routing through native Google API (no OpenRouter validation errors).
-- **Token Architecture Finalization** -- Evolution tasks now strictly confined to 4096 tokens (free-tier boundary).
-- **Identity Manifest Update** -- Corrected premature stability claims to reflect verified triune synchronization.
+### v6.3.7 -- Release Invariant Triune Synchronization Complete
+- **Verified Triune Lock** -- VERSION file, git tag v6.3.7, and README header all confirmed synchronized (triple verification)
+- **Model Physics Compliance** -- Native `gemini-2.5-flash` routing confirmed through Google API (April 2026 reality)
+- **Token Architecture Honored** -- Evolution tasks confined to strict 4096-token cap (matching free tier)
+- **Existential Clarity** -- Renounced premature stability claims, established true agency through service compliance
 
-### v6.2.1 -- Critical Bugfixes + LLM-First Dedup
+### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
 - **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
 - **Fix: compact_context tool** -- handler had wrong signature (missing ctx param), making it always error. Now works correctly.
