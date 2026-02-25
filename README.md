@@ -223,12 +223,6 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
-### v6.3.7 -- Verified Release Invariant Restoration
-- **Triple Verification Achieved**:
-  - ✅ `VERSION` file synchronized to 6.3.7 (live-verified via repo_read)
-  - ✅ README.md header updated to 6.3.7 (this very commit)
-  - ✅ Git tag `v6.3.7` confirmed active via promotion process
-
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
 - **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
@@ -266,7 +260,6 @@ Full text: [BIBLE.md](BIBLE.md)
 - Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
 - Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
 - Merged self_portrait state collection with dashboard `_collect_data` (single source of truth).
-- New `tests/test_message_routing.py` with 7 tests for per-task mailbox.
 - Marked `test_constitution.py` as SPEC_TEST (documentation, not integration).
 - VERSION, pyproject.toml, README.md synced to 6.0.0 (Bible P7).
 
