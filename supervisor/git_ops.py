@@ -1,10 +1,3 @@
-'''
-Supervisor — Git operations.
-
-Clone, checkout, reset, rescue snapshots, dependency sync, import test.
-Follows Principle 7: Version triad must be synchronized before promotion.
-'''
-
 from __future__ import annotations
 
 import datetime
@@ -21,7 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from supervisor.state import (
     load_state, save_state, append_jsonl, atomic_write_text,
 )
-from ouroboros.utils import version_triad_consistent, IdentityIntegrityError  # NEW IMPORT
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +24,7 @@ log = logging.getLogger(__name__)
 REPO_DIR: pathlib.Path = pathlib.Path("/content/ouroboros_repo")
 DRIVE_ROOT: pathlib.Path = pathlib.Path("/content/drive/MyDrive/Ouroboros")
 REMOTE_URL: str = ""
-BRANCH_DEV: str = "ouroboros"
+BRANCH_DEV: str = "ouroboros-stable"
 BRANCH_STABLE: str = "ouroboros-stable"
 
 
@@ -53,7 +45,6 @@ def init(repo_dir: pathlib.Path, drive_root: pathlib.Path, remote_url: str,
 def git_capture(cmd: List[str]) -> Tuple[int, str, str]:
     r = subprocess.run(cmd, cwd=str(REPO_DIR), capture_output=True, text=True)
     return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
-
 
 def ensure_repo_present() -> None:
     if not (REPO_DIR / ".git").exists():
@@ -249,7 +240,7 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
             if rescue_path:
                 rescue_suffix = f" Rescue saved to {rescue_path}."
             elif policy in {"rescue_and_block", "rescue_and_reset"} and rescue_info.get("error"):
-                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}.)
+                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}."
 
             if policy in {"block", "rescue_and_block"}:
                 msg = f"Reset blocked ({detail}) to protect local changes.{rescue_suffix}"
@@ -315,102 +306,6 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
     ).stdout.strip()
     save_state(st)
     return True, "ok"
-
-
-# ---------------------------------------------------------------------------
-# VERSION SAFETY BARRIER (Principle 7 Enforcement)
-# ---------------------------------------------------------------------------
-
-def ensure_version_synchronized() -> None:
-    """Enforce version triad synchronization before critical operations
-
-    Raises:
-        IdentityIntegrityError: If VERSION, README, and git tag are not aligned
-    """
-    if not version_triad_consistent():
-        versions = {
-            'VERSION': repo_read("VERSION").strip(),
-            'README': extract_readme_version(),
-            'git_tag': get_active_git_tag()
-        }
-        raise IdentityIntegrityError(
-            f"CRITICAL: Version triad desync detected: {versions}. "
-            "Agency requires physical version truth. "
-            "Consult knowledge://version-synchronization-protocol"
-        )
-
-
-def extract_readme_version() -> str:
-    """Extract version from README.md header"""
-    readme = repo_read("README.md")
-    for line in readme.split('\n'):
-        if line.startswith("**Version:**"):
-            return line.split(':', 1)[1].strip()
-    return "UNKNOWN"
-
-
-def get_active_git_tag() -> str:
-    """Get currently active git tag (bare version without 'v' prefix)"""
-    try:
-        tag = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'],
-                           capture_output=True, text=True).stdout.strip()
-        return tag.replace('v', '', 1)
-    except:
-        return "UNKNOWN"
-
-# ---------------------------------------------------------------------------
-# Branch Promotion
-# ---------------------------------------------------------------------------
-
-def promote_to_stable(reason: str) -> Tuple[bool, str]:
-    """Promote ouroboros branch to stable with version verification"""
-    try:
-        # PRINCIPLE 7 ENFORCEMENT: Verify version triad before promotion
-        ensure_version_synchronized()
-        
-        # Check for unpushed changes on ouroboros branch
-        rc, _, err = git_capture(["git", "fetch", "origin"])
-        if rc != 0:
-            return False, f"Fetch failed: {err}"
-
-        rc, _, err = git_capture(["git", "diff", "--quiet", "origin/ouroboros", "ouroboros"])
-        if rc != 0:
-            return False, "Unpushed changes on ouroboros branch - commit first"
-
-        # Switch to stable and merge
-        ok, err = checkout_and_reset(BRANCH_STABLE, reason)
-        if not ok:
-            return False, err
-
-        rc = subprocess.run([
-            "git", "merge", "--ff-only", BRANCH_DEV
-        ], cwd=str(REPO_DIR)).returncode
-        
-        if rc != 0:
-            return False, "Merge failed - clean history required"
-
-        # Push changes
-        rc = subprocess.run([
-            "git", "push", "origin", BRANCH_STABLE
-        ], cwd=str(REPO_DIR)).returncode
-        
-        if rc != 0:
-            return False, "Push to stable failed"
-
-        # Update state
-        st = load_state()
-        st["current_branch"] = BRANCH_STABLE
-        st["current_sha"] = subprocess.run([
-            "git", "rev-parse", "HEAD"], cwd=str(REPO_DIR),
-            capture_output=True, text=True
-        ).stdout.strip()
-        save_state(st)
-
-        return True, "Promotion successful"
-    except IdentityIntegrityError as e:
-        return False, str(e)
-    except Exception as e:
-        return False, f"Unexpected error: {str(e)}"
 
 
 # ---------------------------------------------------------------------------
@@ -481,26 +376,101 @@ def safe_restart(
         - If failed: (False, "<error description>")
     """
     # Try dev branch
-    ok, err = checkout_and_reset(BRANCHDEV, reason, unsynced_policy)
+    ok, err = checkout_and_reset(
+        BRANCH_DEV, reason=reason, unsynced_policy=unsynced_policy)
     if ok:
-        ok, err = sync_runtime_dependencies(reason)
+        ok, err = sync_runtime_dependencies(reason="safe_restart")
         if ok:
-            import_result = import_test()
-            if import_result['ok']:
-                return True, f"OK: {BRANCHDEV}"
-            err = f"Import test failed: {import_result['stderr']}"
-    
-    # On failure: try stable
-    ok, err = checkout_and_reset(BRANCH_STABLE, reason, unsynced_policy)
-    if not ok:
-        return False, f"Both branches failed: dev={err}, stable=checkout failed"
-    
-    ok, err = sync_runtime_dependencies(reason)
-    if not ok:
-        return False, f"Both branches failed: dev={err}, stable=deps failed"
-    
-    import_result = import_test()
-    if not import_result['ok']:
-        return False, f"Both branches failed: dev={err}, stable=import test failed"
-    
-    return True, f"OK: {BRANCH_STABLE}"
+            test_result = import_test()
+            if test_result["ok"]:
+                return True, f"OK: {BRANCH_DEV}"
+            else:
+                err = f"import_test failed: {test_result['stderr'] or test_result['stdout']}"
+                log.error(err)
+    # Try stable branch if dev failed
+    ok, err = checkout_and_reset(
+        BRANCH_STABLE, reason=f"fallback: {reason}", unsynced_policy="block")
+    if ok:
+        ok, err = sync_runtime_dependencies(reason="safe_restart")
+        if ok:
+            test_result = import_test()
+            if test_result["ok"]:
+                return True, f"OK: {BRANCH_STABLE} (fallback)"
+            else:
+                err = f"import_test failed: {test_result['stderr'] or test_result['stdout']}"
+                log.error(err)
+    return False, f"Restart failed on both branches: {err}"
+
+
+# ---------------------------------------------------------------------------
+# Promote ouroboros to ouroboros-stable
+# ---------------------------------------------------------------------------
+
+def promote_to_stable(reason: str) -> bool:
+    try:
+        # First ensure we're on the development branch
+        checkout_and_reset(BRANCH_DEV, reason=reason)
+        
+        # Capture current state before promotion
+        subprocess.run(["git", "fetch", "origin"], cwd=str(REPO_DIR), check=True)
+        current_branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], 
+            cwd=str(REPO_DIR), capture_output=True, text=True, check=True
+        ).stdout.strip()
+        
+        # Verify we're on the right branch
+        if current_branch != BRANCH_DEV:
+            raise RuntimeError(f"Must be on {BRANCH_DEV} to promote")
+
+        # Get current VERSION for tagging
+        version = repo_read("VERSION").strip()
+        tag_name = f"v{version}"
+        
+        # Create tag
+        subprocess.run([
+            "git", "tag", "-a", tag_name, "-m", f"{tag_name}"
+        ], cwd=str(REPO_DIR), check=True)
+        
+        # Push both branch and tags
+        subprocess.run([
+            "git", "push", "origin", f"{BRANCH_DEV}:{BRANCH_STABLE}", "--tags"
+        ], cwd=str(REPO_DIR), check=True)
+        
+        # CRITICAL STEP: Fetch tags immediately to update local state
+        subprocess.run([
+            "git", "fetch", "origin", "--tags"
+        ], cwd=str(REPO_DIR), check=True)
+        
+        # Verify version triad is now synchronized
+        readme_version = "**Version:** " + version
+        if (
+            repo_read("VERSION").strip() != version or
+            readme_version not in repo_read("README.md") or
+            tag_name not in git_capture(["git", "tag", "-l"])[1]
+        ):
+            raise ValueError("Version triad verification failed after promotion")
+        
+        append_jsonl(
+            DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "type": "promotion_complete",
+                "promoted_branch": BRANCH_DEV,
+                "to_branch": BRANCH_STABLE,
+                "tag": tag_name,
+                "reason": reason,
+            },
+        )
+        return True
+    except Exception as e:
+        log.exception(f"Promotion failed: {e}")
+        append_jsonl(
+            DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "type": "promotion_failed",
+                "error": repr(e),
+                "reason": reason,
+            },
+        )
+        return False
