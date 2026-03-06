@@ -1,4 +1,4 @@
-'''Supervisor — Git operations.
+Supervisor — Git operations.
 
 Clone, checkout, reset, rescue snapshots, dependency sync, import test.
 '''
@@ -88,7 +88,7 @@ def _collect_repo_sync_state() -> Dict[str, Any]:
         state["warnings"].append(f"status_error:{err}")
 
     upstream = ""
-    rc, up, err = git_capture(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]])
+    rc, up, err = git_capture(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
     if rc == 0 and up:
         upstream = up
     else:
@@ -297,6 +297,23 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
 
     subprocess.run(["git", "switch", branch], cwd=str(REPO_DIR), check=True)
     subprocess.run(["git", "reset", "--hard", f"origin/{branch}"], cwd=str(REPO_DIR), check=True)
+
+    # === VERSION TAG ENFORCEMENT ===
+    # Verify VERSION file matches git tag for HEAD
+    try:
+        with open(REPO_DIR / "VERSION") as f:
+            current_version = f.read().strip()
+        rc, tag_commit, _ = git_capture(["git", "rev-list", "-1", f"v{current_version}"])
+        rc_head, head_commit, _ = git_capture(["git", "rev-parse", "HEAD"])
+        if tag_commit != head_commit:
+            # Force update version tag to current HEAD
+            subprocess.run(["git", "tag", "-f", f"v{current_version}", "HEAD"], cwd=str(REPO_DIR), check=True)
+            subprocess.run(["git", "push", "origin", f"v{current_version}", "--force"], cwd=str(REPO_DIR), check=True)
+            log.warning(f"Version tag v{current_version} reset to HEAD {head_commit[:8]}")
+    except Exception as e:
+        log.error(f"Version tag verification failed: {e}")
+    # ===============================
+
     # Clean __pycache__ to prevent stale bytecode (git checkout may not update mtime)
     for p in REPO_DIR.rglob("__pycache__"):
         shutil.rmtree(p, ignore_errors=True)
@@ -378,64 +395,3 @@ def safe_restart(
     """
     # Try dev branch
    
-    # MODIFIED: Added explicit tag push in promotion workflow
-    if reason.startswith("promote_to_stable"):
-        version = open(REPO_DIR / "VERSION").read().strip()
-        tag_name = f"v{version}"
-        
-        # Force-create version tag to HEAD
-        subprocess.run(["git", "tag", "-f", tag_name], cwd=str(REPO_DIR), check=True)
-        
-        # Push tag to origin
-        rc, _, err = git_capture(["git", "push", "origin", tag_name])
-        if rc != 0:
-            log.warning(f"Failed to push tag {tag_name}: {err}")
-            append_jsonl(
-                DRIVE_ROOT / "logs" / "supervisor.jsonl",
-                {
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "type": "tag_push_failed",
-                    "tag": tag_name,
-                    "error": err
-                }
-            )
-        else:
-            append_jsonl(
-                DRIVE_ROOT / "logs" / "supervisor.jsonl",
-                {
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "type": "tag_push_succeeded",
-                    "tag": tag_name
-                }
-            )
-
-    try:
-        subprocess.run(["git", "fetch", "origin", "--tags"], cwd=str(REPO_DIR), check=True)
-    except Exception:
-        pass
-    
-    try:
-        # First attempt: reset to dev branch (which should be ouroboros)
-        ok, msg = checkout_and_reset(BRANCH_DEV, reason=reason)
-        if not ok:
-            return False, msg
-        if not sync_runtime_dependencies(reason):
-            return False, "dependency sync failed"
-        if not import_test()["ok"]:
-            return False, "import test failed"
-        return True, f"OK: {BRANCH_DEV}"
-    except Exception as e:
-        log.exception("dev branch reset failed")
-        try:
-            # Fallback: reset to stable branch
-            ok, msg = checkout_and_reset(BRANCH_STABLE, reason=reason)
-            if not ok:
-                return False, msg
-            if not sync_runtime_dependencies(reason):
-                return False, "dependency sync failed (stable)"
-            if not import_test()["ok"]:
-                return False, "import test failed (stable)"
-            return True, f"OK: {BRANCH_STABLE}"
-        except Exception as e2:
-            log.exception("stable branch reset failed")
-            return False, f"both branches failed: {e}; {e2}"
