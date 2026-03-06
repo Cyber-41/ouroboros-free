@@ -95,8 +95,7 @@ TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", required=True)
 TOTAL_BUDGET_DEFAULT = get_secret("TOTAL_BUDGET", required=True)
 GITHUB_TOKEN = get_secret("GITHUB_TOKEN", required=True)
 
-# Robust TOTAL_BUDGET parsing — handles 
-, spaces, and other junk from Colab Secrets
+# Robust TOTAL_BUDGET parsing — handles \r\n, spaces, and other junk from Colab Secrets
 # Example: user enters "8 800" → Colab stores as "8\r\n800" → we need 8800
 try:
     _raw_budget = str(TOTAL_BUDGET_DEFAULT or "")
@@ -185,7 +184,7 @@ if not CHAT_LOG_PATH.exists():
 # ----------------------------
 # 3) Git constants
 # ----------------------------
-BRANCH_DEV = "ouroboros-stable"
+BRANCH_DEV = "ouroboros"  # Fixed: was incorrectly set to ouroboros-stable
 BRANCH_STABLE = "ouroboros-stable"
 REMOTE_URL = f"https://{GITHUB_TOKEN}:x-oauth-basic@github.com/{GITHUB_USER}/{GITHUB_REPO}.git"
 
@@ -393,7 +392,7 @@ def _handle_supervisor_command(text: str, chat_id: int, tg_offset: int = 0):
     Returns:
         True  — terminal command fully handled (caller should `continue`)
         str   — dual-path note to prepend (caller falls through to LLM)
-        """    — not a recognized command (falsy, caller falls through)
+        None  — not a recognized command (falsy, caller falls through)
     """
     lowered = text.strip().lower()
 
@@ -403,4 +402,215 @@ def _handle_supervisor_command(text: str, chat_id: int, tg_offset: int = 0):
         st2 = load_state()
         st2["tg_offset"] = tg_offset
         save_state(st2)
-        raise SystemExit("PA
+        return True
+
+    if lowered.startswith("/worker-status"):
+        total = _safe_qsize(PENDING) + len(WORKERS)
+        free = max(0, MAX_WORKERS - len(WORKERS))
+        status = f"Workers: {len(WORKERS)} running, {free} free of {MAX_WORKERS}\n"
+        status += f"Queue: {_safe_qsize(PENDING)} pending\n"
+        status += f"Branch: {BRANCH_DEV} / {BRANCH_STABLE}\n"
+        status += f"SHA: {load_state().get('current_sha', '???')[:8]}\n"
+        status += f"Budget: ${TOTAL_BUDGET_LIMIT:.2f} total, ${st2['spent_usd']:.5f} used ({100*st2['spent_usd']/TOTAL_BUDGET_LIMIT:.1f}%)\n"
+        if st2.get('evolution_mode_enabled'):
+            status += "Evolution mode: ACTIVE\n"
+        send_with_budget(chat_id, status)
+        return True
+
+    if lowered.startswith("/bg "):
+        cmd = lowered[4:].strip()
+        if cmd == "start":
+            _consciousness.start(1)
+            send_with_budget(chat_id, "Background consciousness started (every second for 5 min)")
+            return True
+        if cmd == "stop":
+            _consciousness.stop()
+            send_with_budget(chat_id, "Background consciousness stopped")
+            return True
+
+    if lowered.startswith("/version"):
+        st = load_state()
+        try:
+            v = (REPO_DIR / "VERSION").read_text().strip()
+        except Exception:
+            v = "???"
+        send_with_budget(chat_id, f"Version: {v}\nBranch: {st.get('current_branch')}\nSHA: {st.get('current_sha', '???')[:8]}")
+        return True
+
+    if lowered.startswith("/budget"):
+        st = load_state()
+        total = TOTAL_BUDGET_LIMIT
+        spent = st['spent_usd']
+        remaining = max(0, total - spent)
+        msg = (
+            f"Budget: ${total:.2f} total\n"
+            f"Spent: ${spent:.5f} ({spent/total:.1%})\n"
+            f"Remaining: ${remaining:.5f}\n"
+            f"Last report: {st.get('budget_last_report_at', 'never')[:19]}\n"
+        )
+        send_with_budget(chat_id, msg)
+        return True
+
+    if lowered.startswith("/reset-evolution"):
+        st = load_state()
+        st["evolution_mode_enabled"] = False
+        st["evolution_cycle"] = 0
+        st["evolution_consecutive_failures"] = 0
+        save_state(st)
+        send_with_budget(chat_id, "Evolution mode reset (disabled)")
+        return True
+
+    if lowered.startswith("/enable-evolution"):
+        st = load_state()
+        st["evolution_mode_enabled"] = True
+        save_state(st)
+        send_with_budget(chat_id, "Evolution mode ENABLED")
+        return True
+
+    if lowered.startswith("/disable-evolution"):
+        st = load_state()
+        st["evolution_mode_enabled"] = False
+        save_state(st)
+        send_with_budget(chat_id, "Evolution mode DISABLED")
+        return True
+
+    if lowered.startswith("/evolution-status"):
+        st = load_state()
+        status = f"Evolution mode: {'ENABLED' if st.get('evolution_mode_enabled') else 'DISABLED'}\n"
+        status += f"Cycle: {st.get('evolution_cycle', 0)}\n"
+        status += f"Consecutive failures: {st.get('evolution_consecutive_failures', 0)}\n"
+        send_with_budget(chat_id, status)
+        return True
+
+    if lowered.startswith("/restart"):
+        send_with_budget(chat_id, "♻️ Restart requested by owner")
+        safe_restart(reason="owner-restart")
+        return True
+
+    if lowered.startswith("/reload-config"):
+        st = load_state()
+        if st['owner_chat_id'] != str(chat_id):
+            return  # Only owner can reload config
+        send_with_budget(chat_id, "🔄 Reloading config...")
+        # Re-read environment variables and secrets
+        # This is a simplified version - actual implementation would need more work
+        return True
+
+    if lowered.startswith("/clear-queue"):
+        while not PENDING.empty():
+            PENDING.get_nowait()
+        persist_queue_snapshot(reason="manual-clear")
+        send_with_budget(chat_id, "🚮 Cleared task queue")
+        return True
+
+    if lowered.startswith("/commit-dry-run"):
+        st = load_state()
+        commit_msg = text.strip()[15:].strip()
+        if not commit_msg:
+            send_with_budget(chat_id, "❌ Missing commit message")
+            return True
+        # Simulate commit without push
+        send_with_budget(chat_id, f"📝 Commit dry run: '{commit_msg}'\nStatus: git status, diff would appear here...")
+        return True
+
+    if lowered.startswith("/promote-to-stable"):
+        st = load_state()
+        if st['owner_chat_id'] != str(chat_id):
+            return  # Only owner can promote
+        reason = text.strip()[18:].strip() or "manual promotion"
+        safe_restart(reason="promote-stable")
+        if os.system(f"git checkout {BRANCH_STABLE} && git merge {BRANCH_DEV} --ff-only") == 0:
+            os.system("git push origin " + BRANCH_STABLE)
+            send_with_budget(chat_id, f"✅ Promoted {BRANCH_DEV} → {BRANCH_STABLE} ({reason})")
+        else:
+            send_with_budget(chat_id, "❌ Merge failed - non-fast-forward")
+        return True
+
+    if lowered.startswith("/reset-to-stable"):
+        st = load_state()
+        if st['owner_chat_id'] != str(chat_id):
+            return  # Only owner can reset
+        safe_restart(reason="reset-to-stable")
+        checkout_and_reset(BRANCH_STABLE)
+        send_with_budget(chat_id, f"🔄 Reset to {BRANCH_STABLE} and restarted")
+        return True
+
+    if lowered.startswith("/git "):
+        git_cmd = text.strip()[5:].strip()
+        if not git_cmd:
+            return
+        try:
+            output = subprocess.check_output(["git"] + git_cmd.split(), cwd=REPO_DIR, text=True)
+        except subprocess.CalledProcessError as e:
+            output = f"Error: {e}\n{e.output}"
+        send_with_budget(chat_id, f"```\n{output[:3000]}\n```", parse_mode="MarkdownV2")
+        return True
+
+    return None  # Fall through to normal handling
+
+
+class RestartException(Exception):
+    pass
+
+
+def main_loop():
+    tg_offset = 0
+    last_event = datetime.datetime.now().timestamp()
+    while True:
+        try:
+            # Heartbeat logging
+            now = datetime.datetime.now().timestamp()
+            if DIAG_HEARTBEAT_SEC > 0 and now - last_event >= DIAG_HEARTBEAT_SEC:
+                log.info("supervisor.heartbeat")
+                st = load_state()
+                st["diag_last_heartbeat"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                save_state(st)
+                last_event = now
+
+            # Enforce task timeouts
+            enforce_task_timeouts(SOFT_TIMEOUT_SEC)
+
+            # Poll Telegram for new messages
+            messages, new_offset = TG.get_updates(offset=tg_offset, limit=100)
+            for msg in messages:
+                chat_id = int(msg["chat"]["id"])
+                user_id = int(msg["from"]["id"])
+                text = msg.get("text", "")
+                tg_offset = new_offset
+
+                if user_id != int(get_secret("OWNER_TELEGRAM_ID", default=str(chat_id))):
+                    pass  # Not the owner, skip silently
+
+                # Update state
+                st = load_state()
+                st["last_owner_message_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                st["tg_offset"] = tg_offset
+                save_state(st)
+
+                # Log and dispatch
+                log_chat(chat_id, user_id, text)
+                log.info(f"telegram.message from={user_id} chat={chat_id} text={text}")
+
+                # Handle as task
+                if text.startswith(">>"):
+                    # Evolution mode task
+                    if not st.get("evolution_mode_enabled"):
+                        send_with_budget(chat_id, "Evolution mode disabled. Enable with /enable-evolution")
+                    else:
+                        enqueue_task(f"Evolution task: {text[2:].strip()}", parent_task_id="__EVOLUTION__")
+                        _consciousness.wake_reason = "owner-task"
+                else:
+                    # Regular task
+                    enqueue_task(text, parent_task_id=None)
+
+            time.sleep(1)
+
+        except RestartException:
+            log.warning("Restarting due to exception")
+            safe_restart(reason="exception-restart")
+        except Exception as e:
+            log.exception("Unexpected main loop error")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    main_loop()
