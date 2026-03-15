@@ -1,10 +1,10 @@
-'''
+"""
 Ouroboros — LLM client.
 
 The only module that communicates with the LLM API.
 Supports multiple providers via OpenAI-compatible endpoints.
 Contract: chat(), default_model(), available_models(), add_usage().
-'''
+"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
-DEFAULT_LIGHT_MODEL = "gemini-2.5-flash"
+DEFAULT_LIGHT_MODEL = "google/gemini-2.0-flash"
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ DEFAULT_LIGHT_MODEL = "gemini-2.5-flash"
 #   "base_url"        : OpenAI-compatible endpoint,
 #   "key_env"         : имя env-переменной с API ключом,
 #   "model_strip"     : prefix, который нужно отрезать от названия модели,
-#   "headers"         : дополнительные HTTP-заголовки (only for OpenRouter),
+#   "headers"         : дополнительные HTTP-заголовки (только для OpenRouter),
 #   "openrouter"      : True — включает OpenRouter-специфичные фичи
 #                       (reasoning, provider pinning, cache_control, generation cost),
 # }
@@ -194,7 +194,7 @@ class LLMClient:
         return self._clients[base_url]
 
     def _fetch_generation_cost(self, generation_id: str, base_url: str, api_key: str) -> Optional[float]:
-        """Fetch cost from OpenRouter Generation API as fallback (only for OpenRouter)."""
+        """Fetch cost from OpenRouter Generation API as fallback (только для OpenRouter)."""
         try:
             import requests
             url = f"{base_url.rstrip('/')}/generation?id={generation_id}"
@@ -266,7 +266,7 @@ class LLMClient:
                 kwargs["tool_choice"] = tool_choice
         else:
             # Прямые провайдеры — чистый OpenAI-совместимый запрос
-            # (without cache_control, reasoning, provider pinning)
+            # (без cache_control, reasoning, provider pinning)
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = tool_choice
@@ -294,7 +294,7 @@ class LLMClient:
                 if cache_write:
                     usage["cache_write_tokens"] = int(cache_write)
 
-        # Cost: только для OpenRouter (u прямых провайдеров cost = 0)
+        # Cost: только для OpenRouter (у прямых провайдеров cost = 0)
         if is_openrouter and not usage.get("cost"):
             gen_id = resp_dict.get("id") or ""
             if gen_id:

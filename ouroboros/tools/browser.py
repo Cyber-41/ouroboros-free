@@ -1,5 +1,3 @@
-# Updated browser.py with dark mode support
-
 """
 Browser automation tools via Playwright (sync API).
 
@@ -160,7 +158,6 @@ def _ensure_browser(ctx: ToolContext):
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         ),
-        color_scheme="dark"  # ADDED DARK MODE SUPPORT FROM PLAYWRIGHT 1.58.0
     )
 
     if _HAS_STEALTH:
@@ -211,9 +208,9 @@ _MARKDOWN_JS = """() => {
                 const tag = child.tagName;
                 if (['SCRIPT','STYLE','NOSCRIPT'].includes(tag)) continue;
                 if (['H1','H2','H3','H4','H5','H6'].includes(tag))
-                    out += '\n' + '#'.repeat(parseInt(tag[1])) + ' ';
-                if (tag === 'P' || tag === 'DIV' || tag === 'BR') out += '\n';
-                if (tag === 'LI') out += '\n- ';
+                    out += '\\n' + '#'.repeat(parseInt(tag[1])) + ' ';
+                if (tag === 'P' || tag === 'DIV' || tag === 'BR') out += '\\n';
+                if (tag === 'LI') out += '\\n- ';
                 if (tag === 'A') out += '[';
                 out += walk(child);
                 if (tag === 'A') out += '](' + (child.href||'') + ')';
@@ -381,21 +378,20 @@ def get_tools() -> List[ToolEntry]:
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["click", "fill", "select", "screenshot", "evaluate",
-                                      "scroll"],
+                            "enum": ["click", "fill", "select", "screenshot", "evaluate", "scroll"],
                             "description": "Action to perform",
                         },
                         "selector": {
                             "type": "string",
                             "description": "CSS selector for click/fill/select",
                         },
-                        "timeout": {
-                            "type": "integer",
-                            "description": "Action timeout in ms (default: 5000)",
-                        },
                         "value": {
                             "type": "string",
                             "description": "Value for fill/select, JS for evaluate, direction for scroll",
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Action timeout in ms (default: 5000)",
                         },
                     },
                     "required": ["action"],

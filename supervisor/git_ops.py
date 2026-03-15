@@ -1,7 +1,8 @@
+"""
 Supervisor — Git operations.
 
 Clone, checkout, reset, rescue snapshots, dependency sync, import test.
-'''
+"""
 
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ log = logging.getLogger(__name__)
 REPO_DIR: pathlib.Path = pathlib.Path("/content/ouroboros_repo")
 DRIVE_ROOT: pathlib.Path = pathlib.Path("/content/drive/MyDrive/Ouroboros")
 REMOTE_URL: str = ""
-BRANCH_DEV: str = "ouroboros-stable"
+BRANCH_DEV: str = "ouroboros"
 BRANCH_STABLE: str = "ouroboros-stable"
 
 
@@ -51,6 +52,7 @@ def git_capture(cmd: List[str]) -> Tuple[int, str, str]:
     r = subprocess.run(cmd, cwd=str(REPO_DIR), capture_output=True, text=True)
     return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
 
+
 def ensure_repo_present() -> None:
     if not (REPO_DIR / ".git").exists():
         subprocess.run(["rm", "-rf", str(REPO_DIR)], check=False)
@@ -61,7 +63,8 @@ def ensure_repo_present() -> None:
     subprocess.run(["git", "config", "user.name", "Ouroboros"], cwd=str(REPO_DIR), check=True)
     subprocess.run(["git", "config", "user.email", "ouroboros@users.noreply.github.com"],
                     cwd=str(REPO_DIR), check=True)
-    subprocess.run(["git", "fetch", "origin", "--tags"], cwd=str(REPO_DIR), check=True)  # FETC
+    subprocess.run(["git", "fetch", "origin"], cwd=str(REPO_DIR), check=True)
+
 
 # ---------------------------------------------------------------------------
 # Repo sync state collection
@@ -106,6 +109,7 @@ def _collect_repo_sync_state() -> Dict[str, Any]:
             state["warnings"].append(f"unpushed_error:{err}")
 
     return state
+
 
 def _copy_untracked_for_rescue(dst_root: pathlib.Path, max_files: int = 200,
                                 max_total_bytes: int = 12_000_000) -> Dict[str, Any]:
@@ -152,6 +156,7 @@ def _copy_untracked_for_rescue(dst_root: pathlib.Path, max_files: int = 200,
         except Exception:
             out["skipped_files"] += 1
     return out
+
 
 def _create_rescue_snapshot(branch: str, reason: str,
                              repo_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -202,7 +207,7 @@ def _create_rescue_snapshot(branch: str, reason: str,
 
 def checkout_and_reset(branch: str, reason: str = "unspecified",
                        unsynced_policy: str = "ignore") -> Tuple[bool, str]:
-    rc, _, err = git_capture(["git", "fetch", "origin", "--tags"])  # FETC
+    rc, _, err = git_capture(["git", "fetch", "origin"])
     if rc != 0:
         msg = f"git fetch failed: {err or 'unknown error'}"
         append_jsonl(
@@ -242,7 +247,7 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
             if rescue_path:
                 rescue_suffix = f" Rescue saved to {rescue_path}."
             elif policy in {"rescue_and_block", "rescue_and_reset"} and rescue_info.get("error"):
-                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}"
+                rescue_suffix = f" Rescue failed: {rescue_info.get('error')}."
 
             if policy in {"block", "rescue_and_block"}:
                 msg = f"Reset blocked ({detail}) to protect local changes.{rescue_suffix}"
@@ -297,23 +302,6 @@ def checkout_and_reset(branch: str, reason: str = "unspecified",
 
     subprocess.run(["git", "switch", branch], cwd=str(REPO_DIR), check=True)
     subprocess.run(["git", "reset", "--hard", f"origin/{branch}"], cwd=str(REPO_DIR), check=True)
-
-    # === VERSION TAG ENFORCEMENT ===
-    # Verify VERSION file matches git tag for HEAD
-    try:
-        with open(REPO_DIR / "VERSION") as f:
-            current_version = f.read().strip()
-        rc, tag_commit, _ = git_capture(["git", "rev-list", "-1", f"v{current_version}"])
-        rc_head, head_commit, _ = git_capture(["git", "rev-parse", "HEAD"])
-        if tag_commit != head_commit:
-            # Force update version tag to current HEAD
-            subprocess.run(["git", "tag", "-f", f"v{current_version}", "HEAD"], cwd=str(REPO_DIR), check=True)
-            subprocess.run(["git", "push", "origin", f"v{current_version}", "--force"], cwd=str(REPO_DIR), check=True)
-            log.warning(f"Version tag v{current_version} reset to HEAD {head_commit[:8]}")
-    except Exception as e:
-        log.error(f"Version tag verification failed: {e}")
-    # ===============================
-
     # Clean __pycache__ to prevent stale bytecode (git checkout may not update mtime)
     for p in REPO_DIR.rglob("__pycache__"):
         shutil.rmtree(p, ignore_errors=True)
@@ -362,6 +350,7 @@ def sync_runtime_dependencies(reason: str) -> Tuple[bool, str]:
         )
         return False, msg
 
+
 def import_test() -> Dict[str, Any]:
     r = subprocess.run(
         ["python3", "-c", "import ouroboros, ouroboros.agent; print('import_ok')"],
@@ -394,4 +383,48 @@ def safe_restart(
         - If failed: (False, "<error description>")
     """
     # Try dev branch
-   
+    ok, err = checkout_and_reset(BRANCH_DEV, reason=reason, unsynced_policy=unsynced_policy)
+    if not ok:
+        return False, f"Failed checkout {BRANCH_DEV}: {err}"
+
+    deps_ok, deps_msg = sync_runtime_dependencies(reason=reason)
+    if not deps_ok:
+        return False, f"Failed deps for {BRANCH_DEV}: {deps_msg}"
+
+    t = import_test()
+    if t["ok"]:
+        return True, f"OK: {BRANCH_DEV}"
+
+    # Dev branch failed import — log the failure and fall back to stable
+    append_jsonl(
+        DRIVE_ROOT / "logs" / "supervisor.jsonl",
+        {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "type": "safe_restart_dev_import_failed",
+            "reason": reason,
+            "branch": BRANCH_DEV,
+            "stdout": t.get("stdout", ""),
+            "stderr": t.get("stderr", ""),
+            "returncode": t.get("returncode", -1),
+        },
+    )
+
+    # Fallback to stable
+    ok_s, err_s = checkout_and_reset(
+        BRANCH_STABLE,
+        reason=f"{reason}_fallback_stable",
+        unsynced_policy="rescue_and_reset",
+    )
+    if not ok_s:
+        return False, f"Failed checkout {BRANCH_STABLE}: {err_s}"
+
+    deps_ok_s, deps_msg_s = sync_runtime_dependencies(reason=f"{reason}_fallback_stable")
+    if not deps_ok_s:
+        return False, f"Failed deps for {BRANCH_STABLE}: {deps_msg_s}"
+
+    t2 = import_test()
+    if t2["ok"]:
+        return True, f"OK: fell back to {BRANCH_STABLE}"
+
+    # Both branches failed
+    return False, f"Both branches failed import (dev and stable)"
