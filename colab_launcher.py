@@ -568,7 +568,7 @@ def main_loop():
                 last_event = now
 
             # Enforce task timeouts
-            enforce_task_timeouts(SOFT_TIMEOUT_SEC)
+            enforce_task_timeouts()
 
             # Poll Telegram for new messages
             messages, new_offset = TG.get_updates(offset=tg_offset, limit=100)
