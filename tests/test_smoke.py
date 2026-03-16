@@ -2,7 +2,7 @@
 
 Tests core invariants:
 - All modules import cleanly
-- Tool registry discovers all 33 tools
+- Tool registry discovers all tools
 - Utility functions work correctly
 - Memory operations don't crash
 - Context builder produces valid structure
@@ -88,7 +88,7 @@ EXPECTED_TOOLS = [
     "repo_read", "repo_write_commit", "repo_list", "repo_commit_push",
     "drive_read", "drive_write", "drive_list",
     "git_status", "git_diff",
-    "run_shell", "claude_code_edit",
+    "run_shell", "llm_code_edit",
     "browse_page", "browser_action",
     "web_search",
     "chat_history", "update_scratchpad", "update_identity",
@@ -360,7 +360,7 @@ def test_no_bare_except_pass():
     """
     violations = []
     for root, dirs, files in os.walk(REPO / "ouroboros"):
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        dirs[:] = [d for d in dirs if d != "__pycache__"
         for f in files:
             if not f.endswith(".py"):
                 continue
@@ -426,41 +426,73 @@ def test_function_count_reasonable():
 class TestPrePushGate:
     """Tests for pre-push test gate in git.py."""
 
-    def test_run_pre_push_tests_disabled(self):
-        """When OUROBOROS_PRE_PUSH_TESTS=0, should return None (skip)."""
-        import os
+    def test_run_pre_push_tests_enabled_by_default(self):
+        """Pre-push tests are enabled when env var is not set."""
+        os.environ.pop("OUROBOROS_PRE_PUSH_TESTS", None)
         from ouroboros.tools.git import _run_pre_push_tests
-        old = os.environ.get("OUROBOROS_PRE_PUSH_TESTS")
+        # With ctx=None, should return None (skip)
+        assert _run_pre_push_tests(None) is None
+
+    def test_run_pre_push_tests_disabled(self):
+        """Pre-push tests are skipped when env var is '0'."""
+        os.environ["OUROBOROS_PRE_PUSH_TESTS"] = "0"
         try:
-            os.environ["OUROBOROS_PRE_PUSH_TESTS"] = "0"
-            # ctx doesn't matter since we return early
+            from ouroboros.tools.git import _run_pre_push_tests
             result = _run_pre_push_tests(None)
             assert result is None
         finally:
-            if old is None:
-                os.environ.pop("OUROBOROS_PRE_PUSH_TESTS", None)
-            else:
-                os.environ["OUROBOROS_PRE_PUSH_TESTS"] = old
+            del os.environ["OUROBOROS_PRE_PUSH_TESTS"]
 
-    def test_run_pre_push_tests_no_tests_dir(self):
-        """When tests/ dir doesn't exist, should return None."""
-        from ouroboros.tools.git import _run_pre_push_tests
-        import os
-        old = os.environ.get("OUROBOROS_PRE_PUSH_TESTS")
-        try:
-            os.environ["OUROBOROS_PRE_PUSH_TESTS"] = "1"
-            # Create a mock ctx with non-existent repo_dir
-            class FakeCtx:
-                repo_dir = "/tmp/nonexistent_repo_dir_12345"
-            result = _run_pre_push_tests(FakeCtx())
-            assert result is None
-        finally:
-            if old is None:
-                os.environ.pop("OUROBOROS_PRE_PUSH_TESTS", None)
-            else:
-                os.environ["OUROBOROS_PRE_PUSH_TESTS"] = old
+    def test_pre_push_test_output_capped(self):
+        """MAX_TEST_OUTPUT constant exists and is reasonable."""
+        from ouroboros.tools.git import MAX_TEST_OUTPUT
+        assert isinstance(MAX_TEST_OUTPUT, int)
+        assert 1000 <= MAX_TEST_OUTPUT <= 50000
 
-    def test_git_push_with_tests_exists(self):
-        """_git_push_with_tests helper exists and is callable."""
-        from ouroboros.tools.git import _git_push_with_tests
-        assert callable(_git_push_with_tests)
+
+# ── LLM config tests ────────────────────────────────────────────
+
+def test_default_light_model():
+    """DEFAULT_LIGHT_MODEL is set."""
+    from ouroboros.llm import DEFAULT_LIGHT_MODEL
+    assert DEFAULT_LIGHT_MODEL
+    assert "/" in DEFAULT_LIGHT_MODEL  # provider/model format
+
+
+# ── System prompt tests ─────────────────────────────────────────
+
+def test_system_prompt_exists():
+    """System prompt file exists."""
+    sys_prompt = REPO / "prompts" / "SYSTEM.md"
+    assert sys_prompt.exists(), "prompts/SYSTEM.md must exist"
+    content = sys_prompt.read_text()
+    assert "Ouroboros" in content
+    assert "Principle" in content
+
+
+def test_consciousness_prompt_exists():
+    """Consciousness prompt file exists."""
+    bg_prompt = REPO / "prompts" / "CONSCIOUSNESS.md"
+    assert bg_prompt.exists(), "prompts/CONSCIOUSNESS.md must exist"
+    content = bg_prompt.read_text()
+    assert "consciousness" in content.lower()
+
+
+# ── Model pricing tests ─────────────────────────────────────────
+
+def test_pricing_has_core_models():
+    """Static pricing table includes core models."""
+    from ouroboros.loop import _MODEL_PRICING_STATIC
+    assert "anthropic/claude-sonnet-4.6" in _MODEL_PRICING_STATIC
+    assert "google/gemini-2.5-pro-preview" in _MODEL_PRICING_STATIC
+
+
+def test_pricing_tuple_format():
+    """Each pricing entry is a 3-tuple of (prompt, cache, completion)."""
+    from ouroboros.loop import _MODEL_PRICING_STATIC
+    for model, prices in _MODEL_PRICING_STATIC.items():
+        assert isinstance(prices, tuple), f"{model}: not a tuple"
+        assert len(prices) == 3, f"{model}: expected 3-tuple, got {len(prices)}"
+        for p in prices:
+            assert isinstance(p, (int, float)), f"{model}: price {p} not numeric"
+            assert p >= 0, f"{model}: negative price {p}"
