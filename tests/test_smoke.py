@@ -360,7 +360,7 @@ def test_no_bare_except_pass():
     """
     violations = []
     for root, dirs, files in os.walk(REPO / "ouroboros"):
-        dirs[:] = [d for d in dirs if d != "__pycache__"
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
         for f in files:
             if not f.endswith(".py"):
                 continue

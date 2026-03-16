@@ -179,7 +179,7 @@ class LLMClient:
     только с разным base_url и api_key.
     """
 
-    def __init__(self):
+    def __init__(self, api_key=None):
         # Кэш клиентов по base_url чтобы не пересоздавать
         self._clients: Dict[str, Any] = {}
 
