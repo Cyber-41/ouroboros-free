@@ -8,14 +8,29 @@ Contract: chat(), default_model(), available_models(), add_usage().
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import pathlib
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
 DEFAULT_LIGHT_MODEL = "google/gemini-2.0-flash"
+
+_MODEL_CONFIG_PATH = pathlib.Path("/content/drive/MyDrive/Ouroboros/model_config.json")
+
+
+def _load_model_config() -> Dict[str, Any]:
+    """Load model config from Drive if it exists."""
+    try:
+        if _MODEL_CONFIG_PATH.exists():
+            with open(_MODEL_CONFIG_PATH) as f:
+                return json.load(f)
+    except Exception as e:
+        log.debug("Failed to load model_config.json: %s", e)
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +167,7 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
                 cached_price = round(prompt_price * 0.1, 4)
 
             if prompt_price > 1000 or completion_price > 1000:
-                log.warning(f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={completion_price})")
+                log.warning(f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={prompt_price})")
                 continue
 
             pricing_dict[model_id] = (prompt_price, cached_price, completion_price)
@@ -172,6 +187,7 @@ class LLMClient:
     Роутинг по префиксу модели:
       google/*   -> Google AI Studio (OpenAI-compat, бесплатный tier)
       groq/*     -> Groq             (OpenAI-compat, бесплатный tier)
+      mistral/*  -> Mistral AI      (OpenAI-compat, прямой API)
       together/* -> Together AI      (OpenAI-compat)
       всё остальное -> OpenRouter
 
@@ -363,17 +379,39 @@ class LLMClient:
         return text, usage
 
     def default_model(self) -> str:
-        """Return the single default model from env. LLM switches via tool if needed."""
-        return os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+        """Return the single default model from env or model_config."""
+        config = _load_model_config()
+        return config.get("primary") or os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
 
     def available_models(self) -> List[str]:
-        """Return list of available models from env (for switch_model tool schema)."""
-        main = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
-        code = os.environ.get("OUROBOROS_MODEL_CODE", "")
-        light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
-        models = [main]
-        if code and code != main:
-            models.append(code)
-        if light and light != main and light != code:
-            models.append(light)
+        """Return list of available models from model_config + env."""
+        models = []
+        config = _load_model_config()
+
+        # From model_config (Drive) — primary source of truth
+        for key in ("primary", "code", "light"):
+            m = config.get(key, "")
+            if m and m not in models:
+                models.append(m)
+
+        # From env — additional/legacy
+        env_main = os.environ.get("OUROBOROS_MODEL", "")
+        env_code = os.environ.get("OUROBOROS_MODEL_CODE", "")
+        env_light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
+        for m in (env_main, env_code, env_light):
+            if m and m not in models:
+                models.append(m)
+
+        # Known stable models always available
+        known = [
+            "mistral/devstral-latest",
+            "mistral/devstral-small-latest",
+            "mistral/devstral-medium-latest",
+            "arcee-ai/trinity-large-preview:free",
+            "openrouter/hunter-alpha",
+        ]
+        for m in known:
+            if m not in models:
+                models.append(m)
+
         return models
