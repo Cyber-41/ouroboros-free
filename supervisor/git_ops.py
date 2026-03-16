@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 REPO_DIR: pathlib.Path = pathlib.Path("/content/ouroboros_repo")
 DRIVE_ROOT: pathlib.Path = pathlib.Path("/content/drive/MyDrive/Ouroboros")
 REMOTE_URL: str = ""
-BRANCH_DEV: str = "ouroboros-stable"
+BRANCH_DEV: str = "ouroboros"
 BRANCH_STABLE: str = "ouroboros-stable"
 
 
@@ -383,48 +383,35 @@ def safe_restart(
         - If failed: (False, "<error description>")
     """
     # Try dev branch
-    ok, err = checkout_and_reset(BRANCH_DEV, reason=reason, unsynced_policy=unsynced_policy)
-    if not ok:
-        return False, f"Failed checkout {BRANCH_DEV}: {err}"
-
-    deps_ok, deps_msg = sync_runtime_dependencies(reason=reason)
-    if not deps_ok:
-        return False, f"Failed deps for {BRANCH_DEV}: {deps_msg}"
-
-    t = import_test()
-    if t["ok"]:
-        return True, f"OK: {BRANCH_DEV}"
-
-    # Dev branch failed import — log the failure and fall back to stable
-    append_jsonl(
-        DRIVE_ROOT / "logs" / "supervisor.jsonl",
-        {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "type": "safe_restart_dev_import_failed",
-            "reason": reason,
-            "branch": BRANCH_DEV,
-            "stdout": t.get("stdout", ""),
-            "stderr": t.get("stderr", ""),
-            "returncode": t.get("returncode", -1),
-        },
+    ok, err = checkout_and_reset(
+        branch=BRANCH_DEV, reason=reason, unsynced_policy=unsynced_policy,
     )
+    if ok:
+        sync_runtime_dependencies(reason=f"restart:{reason}")
+        imp = import_test()
+        if imp["ok"]:
+            return True, f"OK: {BRANCH_DEV}"
+        # Dev import failed — try stable
+        append_jsonl(
+            DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "type": "dev_import_failed_fallback",
+                "branch": BRANCH_DEV,
+                "stderr": (imp.get("stderr") or "")[:500],
+            },
+        )
 
     # Fallback to stable
-    ok_s, err_s = checkout_and_reset(
-        BRANCH_STABLE,
-        reason=f"{reason}_fallback_stable",
-        unsynced_policy="rescue_and_reset",
+    ok2, err2 = checkout_and_reset(
+        branch=BRANCH_STABLE, reason=f"dev failed: {err}",
+        unsynced_policy=unsynced_policy,
     )
-    if not ok_s:
-        return False, f"Failed checkout {BRANCH_STABLE}: {err_s}"
+    if ok2:
+        sync_runtime_dependencies(reason=f"fallback_restart:{reason}")
+        imp2 = import_test()
+        if imp2["ok"]:
+            return True, f"OK: {BRANCH_STABLE} (dev failed)"
+        return False, f"Both branches failed import. Dev: {err}. Stable stderr: {(imp2.get('stderr') or '')[:300]}"
 
-    deps_ok_s, deps_msg_s = sync_runtime_dependencies(reason=f"{reason}_fallback_stable")
-    if not deps_ok_s:
-        return False, f"Failed deps for {BRANCH_STABLE}: {deps_msg_s}"
-
-    t2 = import_test()
-    if t2["ok"]:
-        return True, f"OK: fell back to {BRANCH_STABLE}"
-
-    # Both branches failed
-    return False, f"Both branches failed import (dev and stable)"
+    return False, f"Both branches failed checkout. Dev: {err}, Stable: {err2}"
