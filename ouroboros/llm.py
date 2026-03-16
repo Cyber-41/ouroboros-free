@@ -46,6 +46,13 @@ _PROVIDERS: Dict[str, Dict[str, Any]] = {
         "headers":      {},
         "openrouter":   False,
     },
+    "mistral/": {
+        "base_url":     "https://api.mistral.ai/v1",
+        "key_env":      "MISTRAL_API_KEY",
+        "model_strip":  "mistral/",
+        "headers":      {},
+        "openrouter":   False,
+    },
     "together/": {
         "base_url":     "https://api.together.xyz/v1",
         "key_env":      "TOGETHER_API_KEY",
