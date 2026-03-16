@@ -75,15 +75,35 @@ assert OPENROUTER_API_KEY, "Missing OPENROUTER_API_KEY"
 assert TELEGRAM_BOT_TOKEN, "Missing TELEGRAM_BOT_TOKEN"
 assert GITHUB_TOKEN, "Missing GITHUB_TOKEN"
 
-# ---- Model configuration (override via env) ----
-OUROBOROS_MODEL             = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
-OUROBOROS_MODEL_CODE        = os.environ.get("OUROBOROS_MODEL_CODE", "anthropic/claude-sonnet-4.6")
-OUROBOROS_MODEL_LIGHT       = os.environ.get("OUROBOROS_MODEL_LIGHT", "google/gemini-3-pro-preview")
-OUROBOROS_WEBSEARCH_MODEL   = os.environ.get("OUROBOROS_WEBSEARCH_MODEL", "gpt-5")
-OUROBOROS_MODEL_FALLBACK_LIST = os.environ.get(
-    "OUROBOROS_MODEL_FALLBACK_LIST",
-    "anthropic/claude-sonnet-4.6,google/gemini-3-pro-preview,openai/gpt-4.1",
-)
+# ---- Load Drive model config (as defaults, env overrides) ----
+_model_config_path = DRIVE_ROOT / "model_config.json"
+_model_config: Dict[str, Any] = {}
+try:
+    if _model_config_path.exists():
+        _model_config = json.loads(_model_config_path.read_text())
+        log.info("Loaded model_config.json from Drive: %s", list(_model_config.keys()))
+except Exception as e:
+    log.warning("Failed to load model_config.json: %s", e)
+
+def _model_default(key: str, env_fallback: str) -> str:
+    """Drive config as default, env overrides."""
+    return os.environ.get(f"OUROBOROS_{key}", _model_config.get(key.lower(), env_fallback))
+
+def _model_fallback_default() -> str:
+    env_val = os.environ.get("OUROBOROS_MODEL_FALLBACK_LIST")
+    if env_val:
+        return env_val
+    raw = _model_config.get("fallback_list", "")
+    if isinstance(raw, list):
+        return ",".join(raw)
+    return str(raw) if raw else "anthropic/claude-sonnet-4.6,google/gemini-3-pro-preview,openai/gpt-4.1"
+
+# ---- Model configuration ----
+OUROBOROS_MODEL             = _model_default("MODEL", "anthropic/claude-sonnet-4.6")
+OUROBOROS_MODEL_CODE        = _model_default("MODEL_CODE", "anthropic/claude-sonnet-4.6")
+OUROBOROS_MODEL_LIGHT       = _model_default("MODEL_LIGHT", "google/gemini-3-pro-preview")
+OUROBOROS_WEBSEARCH_MODEL   = _model_default("WEBSEARCH_MODEL", "gpt-5")
+OUROBOROS_MODEL_FALLBACK_LIST = _model_fallback_default()
 
 # ---- Infrastructure ----
 OUROBOROS_MAX_WORKERS       = int(os.environ.get("OUROBOROS_MAX_WORKERS", "5"))
@@ -105,6 +125,7 @@ MODEL_CFG = {
     "websearch": OUROBOROS_WEBSEARCH_MODEL,
     "fallback_list": OUROBOROS_MODEL_FALLBACK_LIST,
 }
+log.info("Model config: primary=%s, fallback=%s", MODEL_CFG["primary"], MODEL_CFG["fallback_list"])
 
 # ---- Version ----
 VERSION = (REPO_DIR / "VERSION").read_text().strip() if (REPO_DIR / "VERSION").exists() else "0.0.0"
