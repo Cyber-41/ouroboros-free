@@ -60,7 +60,7 @@ class BackgroundConsciousness:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._wakeup_event = threading.Event()
-        self._next_wakeup_sec: float = 300.0
+        self._next_wakeup_sec: float = 600.0  # 10 min default (gentler on free tier rate limits)
         self._observations: queue.Queue = queue.Queue()
         self._deferred_events: list = []
 
@@ -157,7 +157,14 @@ class BackgroundConsciousness:
                 )
 
     def _check_budget(self) -> bool:
-        """Check if background consciousness is within its budget allocation."""
+        """Check if background consciousness is within its budget allocation.
+
+        Always returns True when using free models (cost=0).
+        """
+        # Free models have no cost — budget is irrelevant
+        model = self._model
+        if model.endswith(":free"):
+            return True
         try:
             total_budget = float(os.environ.get("TOTAL_BUDGET", "1"))
             if total_budget <= 0:

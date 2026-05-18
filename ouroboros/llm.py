@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
-DEFAULT_LIGHT_MODEL = "google/gemini-2.0-flash"
+DEFAULT_LIGHT_MODEL = "deepseek/deepseek-v4-flash:free"
 
 _MODEL_CONFIG_PATH = pathlib.Path("/content/drive/MyDrive/Ouroboros/model_config.json")
 
@@ -323,11 +323,13 @@ class LLMClient:
 
         # OpenRouter-специфичные параметры
         if is_openrouter:
-            extra_body: Dict[str, Any] = {
-                "reasoning": {"effort": effort, "exclude": True},
-            }
-            # Pin Anthropic models to Anthropic provider for prompt caching
-            if model.startswith("anthropic/"):
+            extra_body: Dict[str, Any] = {}
+            # Reasoning — only if effort is meaningful (free models may not support)
+            if effort not in ("none", "minimal"):
+                extra_body["reasoning"] = {"effort": effort, "exclude": True}
+            # Pin Anthropic models to Anthropic provider — only for paid models
+            # Free models (:free suffix) go through OpenRouter's default routing
+            if model.startswith("anthropic/") and not model.endswith(":free"):
                 extra_body["provider"] = {
                     "order": ["Anthropic"],
                     "allow_fallbacks": False,
@@ -336,12 +338,16 @@ class LLMClient:
             kwargs["extra_body"] = extra_body
 
             if tools:
-                tools_with_cache = list(tools)
-                if tools_with_cache:
-                    last_tool = {**tools_with_cache[-1]}
-                    last_tool["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
-                    tools_with_cache[-1] = last_tool
-                kwargs["tools"] = tools_with_cache
+                # cache_control on tools — only for paid models that support it
+                if not model.endswith(":free"):
+                    tools_with_cache = list(tools)
+                    if tools_with_cache:
+                        last_tool = {**tools_with_cache[-1]}
+                        last_tool["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+                        tools_with_cache[-1] = last_tool
+                    kwargs["tools"] = tools_with_cache
+                else:
+                    kwargs["tools"] = tools
                 kwargs["tool_choice"] = tool_choice
         else:
             # Прямые провайдеры — чистый OpenAI-совместимый запрос
@@ -373,14 +379,18 @@ class LLMClient:
                 if cache_write:
                     usage["cache_write_tokens"] = int(cache_write)
 
-        # Cost: только для OpenRouter (у прямых провайдеров cost = 0)
+        # Cost: for OpenRouter paid models only
+        # Free models (:free suffix) always have cost=0 — skip the HTTP call
         if is_openrouter and not usage.get("cost"):
-            gen_id = resp_dict.get("id") or ""
-            if gen_id:
-                api_key = os.environ.get(provider_cfg["key_env"], "")
-                cost = self._fetch_generation_cost(gen_id, provider_cfg["base_url"], api_key)
-                if cost is not None:
-                    usage["cost"] = cost
+            if model.endswith(":free"):
+                usage["cost"] = 0.0
+            else:
+                gen_id = resp_dict.get("id") or ""
+                if gen_id:
+                    api_key = os.environ.get(provider_cfg["key_env"], "")
+                    cost = self._fetch_generation_cost(gen_id, provider_cfg["base_url"], api_key)
+                    if cost is not None:
+                        usage["cost"] = cost
 
         return msg, usage
 
@@ -388,7 +398,7 @@ class LLMClient:
         self,
         prompt: str,
         images: List[Dict[str, Any]],
-        model: str = "anthropic/claude-sonnet-4.6",
+        model: str = "",
         max_tokens: int = 1024,
         reasoning_effort: str = "low",
     ) -> Tuple[str, Dict[str, Any]]:
@@ -423,6 +433,8 @@ class LLMClient:
             else:
                 log.warning("vision_query: skipping image with unknown format: %s", list(img.keys()))
 
+        if not model:
+            model = self.default_model()
         messages = [{"role": "user", "content": content}]
         response_msg, usage = self.chat(
             messages=messages,
@@ -435,12 +447,23 @@ class LLMClient:
         return text, usage
 
     def default_model(self) -> str:
-        """Return the single default model from env or model_config."""
+        """Return the default model: model_config > env > dynamic free model selection."""
         config = _load_model_config()
-        return config.get("primary") or os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+        cfg_model = config.get("primary")
+        if cfg_model:
+            return cfg_model
+        env_model = os.environ.get("OUROBOROS_MODEL", "")
+        if env_model:
+            return env_model
+        try:
+            from ouroboros.model_selector import select_primary_model
+            return select_primary_model()
+        except Exception:
+            log.debug("model_selector failed, using hardcoded fallback", exc_info=True)
+            return "deepseek/deepseek-v4-flash:free"
 
     def available_models(self) -> List[str]:
-        """Return list of available models from model_config + env."""
+        """Return list of available models from model_config + env + free API."""
         models = []
         config = _load_model_config()
 
@@ -450,7 +473,7 @@ class LLMClient:
             if m and m not in models:
                 models.append(m)
 
-        # From env override — adds anything set via OUROBOROS_MODEL etc.
+        # From env override
         env_models = {
             "primary": "OUROBOROS_MODEL",
             "code": "OUROBOROS_MODEL_CODE",
@@ -462,7 +485,17 @@ class LLMClient:
                 models.append(m)
 
         if not models:
-            models.append("anthropic/claude-sonnet-4.6")
+            models.append(self.default_model())
+
+        # Add free models from API as additional options
+        try:
+            from ouroboros.model_selector import get_fallback_chain
+            main = models[0] if models else ""
+            for m in get_fallback_chain(exclude_model=main):
+                if m not in models:
+                    models.append(m)
+        except Exception:
+            log.debug("Failed to get fallback chain for available_models", exc_info=True)
         return models
 
 

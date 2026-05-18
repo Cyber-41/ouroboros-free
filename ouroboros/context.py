@@ -364,29 +364,42 @@ def build_llm_messages(
 
     dynamic_text = "\n\n".join(dynamic_parts)
 
-    # System message with 3 content blocks for optimal caching
-    messages: List[Dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": [
-                {
-                    "type": "text",
-                    "text": static_text,
-                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
-                },
-                {
-                    "type": "text",
-                    "text": semi_stable_text,
-                    "cache_control": {"type": "ephemeral"},
-                },
-                {
-                    "type": "text",
-                    "text": dynamic_text,
-                },
-            ],
-        },
-        {"role": "user", "content": _build_user_content(task)},
-    ]
+    # Check if current model supports cache_control
+    _current_model = os.environ.get("OUROBOROS_MODEL", "")
+    _use_cache_control = _current_model and not _current_model.endswith(":free")
+
+    # System message with content blocks
+    # Use cache_control only for models that support it (paid models)
+    if _use_cache_control:
+        messages: List[Dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": static_text,
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                    },
+                    {
+                        "type": "text",
+                        "text": semi_stable_text,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": dynamic_text,
+                    },
+                ],
+            },
+            {"role": "user", "content": _build_user_content(task)},
+        ]
+    else:
+        # Free models: single text block, no cache_control
+        full_system_text = static_text + "\n\n" + semi_stable_text + "\n\n" + dynamic_text
+        messages = [
+            {"role": "system", "content": full_system_text},
+            {"role": "user", "content": _build_user_content(task)},
+        ]
 
     # --- Soft-cap token trimming ---
     messages, cap_info = apply_message_token_soft_cap(messages, 200000)

@@ -81,6 +81,9 @@ def _get_pricing() -> Dict[str, Tuple[float, float, float]]:
 def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int,
                    cached_tokens: int = 0, cache_write_tokens: int = 0) -> float:
     """Estimate cost from token counts using known pricing. Returns 0 if model unknown."""
+    # Free models always cost $0
+    if model.endswith(":free"):
+        return 0.0
     model_pricing = _get_pricing()
     pricing = model_pricing.get(model)
     if not pricing:
@@ -556,12 +559,22 @@ def run_llm_loop(
         MAX_ROUNDS = 200
         log.warning("Invalid OUROBOROS_MAX_ROUNDS, defaulting to 200")
 
-    # Build fallback chain once — reuse every round
-    _fallback_list_raw = os.environ.get(
-        "OUROBOROS_MODEL_FALLBACK_LIST",
-        "google/gemini-2.5-flash,openai/gpt-oss-120b:free,meta-llama/llama-3.3-70b-instruct:free,groq/llama-3.3-70b-versatile"
-    )
-    _fallback_chain = [m.strip() for m in _fallback_list_raw.split(",") if m.strip()]
+    # Build fallback chain: env override or dynamic from model_selector
+    _fallback_list_raw = os.environ.get("OUROBOROS_MODEL_FALLBACK_LIST", "")
+    if _fallback_list_raw.strip():
+        _fallback_chain = [m.strip() for m in _fallback_list_raw.split(",") if m.strip()]
+    else:
+        try:
+            from ouroboros.model_selector import get_fallback_chain
+            _fallback_chain = get_fallback_chain(exclude_model=active_model)
+        except Exception:
+            log.warning("Failed to build dynamic fallback chain, using hardcoded", exc_info=True)
+            _fallback_chain = [
+                "deepseek/deepseek-v4-flash:free",
+                "nvidia/nemotron-3-super-120b-a12b:free",
+                "arcee-ai/trinity-large-thinking:free",
+                "qwen/qwen3-coder:free",
+            ]
 
     round_idx = 0
     try:

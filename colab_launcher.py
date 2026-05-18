@@ -96,13 +96,13 @@ def _model_fallback_default() -> str:
     raw = _model_config.get("fallback_list", "")
     if isinstance(raw, list):
         return ",".join(raw)
-    return str(raw) if raw else "anthropic/claude-sonnet-4.6,google/gemini-3-pro-preview,openai/gpt-4.1"
+    return str(raw) if raw else ""
 
 # ---- Model configuration ----
-OUROBOROS_MODEL             = _model_default("MODEL", "anthropic/claude-sonnet-4.6")
-OUROBOROS_MODEL_CODE        = _model_default("MODEL_CODE", "anthropic/claude-sonnet-4.6")
-OUROBOROS_MODEL_LIGHT       = _model_default("MODEL_LIGHT", "google/gemini-3-pro-preview")
-OUROBOROS_WEBSEARCH_MODEL   = _model_default("WEBSEARCH_MODEL", "gpt-5")
+OUROBOROS_MODEL             = _model_default("MODEL", "deepseek/deepseek-v4-flash:free")
+OUROBOROS_MODEL_CODE        = _model_default("MODEL_CODE", "qwen/qwen3-coder:free")
+OUROBOROS_MODEL_LIGHT       = _model_default("MODEL_LIGHT", DEFAULT_LIGHT_MODEL)
+OUROBOROS_WEBSEARCH_MODEL   = _model_default("WEBSEARCH_MODEL", "deepseek/deepseek-v4-flash:free")
 OUROBOROS_MODEL_FALLBACK_LIST = _model_fallback_default()
 
 # ---- Infrastructure ----
